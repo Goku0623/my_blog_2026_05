@@ -1,0 +1,72 @@
+# Redis 配置文件示例
+# 将此文件放到项目根目录并在 docker-compose.yml 中挂载
+
+# 监听地址和端口
+bind 0.0.0.0
+port 6379
+
+# 保护模式（生产环境建议开启）
+protected-mode yes
+
+# 最大内存限制
+maxmemory 256mb
+
+# 内存淘汰策略
+# allkeys-lru: 对所有键使用 LRU 算法淘汰
+# volatile-lru: 仅对设置了过期时间的键使用 LRU 淘汰
+# allkeys-lfu: 对所有键使用 LFU 算法淘汰
+# volatile-lfu: 仅对设置了过期时间的键使用 LFU 淘汰
+# allkeys-random: 随机删除键
+# volatile-random: 随机删除设置了过期时间的键
+# volatile-ttl: 删除最接近过期时间的键
+# noeviction: 不删除任何键，内存满时报错
+maxmemory-policy allkeys-lru
+
+# 持久化配置
+
+# RDB 快照
+save 900 1      # 900 秒内至少 1 个键改变就保存
+save 300 10     # 300 秒内至少 10 个键改变就保存
+save 60 10000   # 60 秒内至少 10000 个键改变就保存
+
+# RDB 文件名
+dbfilename dump.rdb
+
+# 数据目录
+dir /data
+
+# AOF 持久化（更安全但性能略低）
+appendonly yes
+appendfilename "appendonly.aof"
+appendfsync everysec  # 每秒同步一次
+
+# 日志级别
+# debug, verbose, notice, warning
+loglevel notice
+
+# 日志文件（空字符串表示输出到标准输出）
+logfile ""
+
+# 数据库数量
+databases 16
+
+# 超时设置
+timeout 300
+
+# TCP keepalive
+tcp-keepalive 300
+
+# 慢查询日志
+slowlog-log-slower-than 10000  # 微秒，10ms
+slowlog-max-len 128
+
+# 客户端连接数限制
+maxclients 10000
+
+# 使用说明：
+# 1. 将此文件重命名为 redis.conf
+# 2. 在 docker-compose.yml 中挂载配置文件：
+#    redis:
+#      volumes:
+#        - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+#      command: redis-server /usr/local/etc/redis/redis.conf
