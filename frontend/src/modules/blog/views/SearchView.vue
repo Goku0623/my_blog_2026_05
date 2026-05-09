@@ -7,13 +7,6 @@
       <div aria-hidden="true" class="hero-orb size-[420px] -top-32 left-1/2 -translate-x-1/2 bg-[var(--brand)]/15"></div>
 
       <div class="container-page relative pt-12 sm:pt-16 pb-10">
-        <button
-          class="mb-8 inline-flex items-center gap-1.5 text-sm text-[var(--text-soft)] hover:text-[var(--brand)] transition-colors"
-          @click="$router.back()"
-        >
-          <ArrowLeft class="size-4" /> 返回
-        </button>
-
         <div class="text-center max-w-3xl mx-auto">
           <span class="eyebrow"><SearchIcon class="size-3" /> 探索</span>
           <h1 class="mt-3 hero-headline text-[clamp(2rem,5vw,3.75rem)] text-[var(--text)] leading-[1.1]">
@@ -119,7 +112,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Search as SearchIcon, ArrowRight } from 'lucide-vue-next'
+import { Search as SearchIcon, ArrowRight } from 'lucide-vue-next'
 import { searchArticles, type Article } from '@/api/articles'
 import SiteNavbar from '../components/SiteNavbar.vue'
 import SiteFooter from '../components/SiteFooter.vue'

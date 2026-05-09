@@ -7,7 +7,7 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'Home',
     component: () => import('@/modules/blog/views/HomeView.vue'),
-    meta: { title: '首页' },
+    meta: { title: '进击の卡卡罗特', standalone: true },
   },
   {
     path: '/article/:slug',
@@ -32,6 +32,18 @@ const routes: RouteRecordRaw[] = [
     name: 'Search',
     component: () => import('@/modules/blog/views/SearchView.vue'),
     meta: { title: '搜索' },
+  },
+  {
+    path: '/messages',
+    name: 'Messages',
+    component: () => import('@/modules/blog/views/MessageWallView.vue'),
+    meta: { title: '留言墙' },
+  },
+  {
+    path: '/about',
+    name: 'About',
+    component: () => import('@/modules/blog/views/AboutMeView.vue'),
+    meta: { title: '关于我' },
   },
 
   // 管理后台路由
@@ -76,6 +88,12 @@ const routes: RouteRecordRaw[] = [
         name: 'Comments',
         component: () => import('@/modules/admin/views/CommentsView.vue'),
         meta: { title: '评论管理', requiresAuth: true },
+      },
+      {
+        path: 'guestbook',
+        name: 'GuestbookManage',
+        component: () => import('@/modules/admin/views/GuestbookManageView.vue'),
+        meta: { title: '留言管理', requiresAuth: true },
       },
       {
         path: 'system-config',
@@ -131,7 +149,12 @@ router.beforeEach(async (to, _from, next) => {
 
   // 设置页面标题
   if (to.meta.title) {
-    document.title = `${to.meta.title} - 我的博客`
+    // 首页单独设置，不添加后缀
+    if (to.meta.standalone) {
+      document.title = to.meta.title as string
+    } else {
+      document.title = `${to.meta.title}`
+    }
   }
 
   // 需要登录的页面

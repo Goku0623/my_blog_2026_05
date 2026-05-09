@@ -36,13 +36,6 @@
                 浏览文章
                 <ArrowRight class="size-4" />
               </button>
-              <router-link
-                to="/search"
-                class="inline-flex items-center gap-2 h-11 px-5 rounded-full border border-[var(--border-strong)] bg-[var(--surface)]/60 backdrop-blur text-sm font-medium text-[var(--text-soft)] hover:text-[var(--text)] hover:border-[var(--brand)] transition-colors"
-              >
-                <Search class="size-4" />
-                搜索
-              </router-link>
             </div>
           </div>
 
@@ -126,7 +119,7 @@
     <!-- ============================================================
          Featured：精选文章
          ============================================================ -->
-    <section v-if="featuredArticle" class="container-page py-10 sm:py-14">
+    <section v-if="featuredTotal > 0" class="container-page py-10 sm:py-14">
       <div class="mb-6 flex items-end justify-between">
         <div>
           <p class="eyebrow">Editor's Pick</p>
@@ -135,14 +128,22 @@
           </h2>
         </div>
       </div>
-      <ArticleCard :article="featuredArticle" variant="featured" />
+      <ArticleCard v-if="featuredArticle" :article="featuredArticle" variant="featured" />
+      <div v-if="featuredTotal > featuredPageSize" class="mt-8 flex justify-center">
+        <UPagination
+          v-model:current="featuredCurrentPage"
+          :page-size="featuredPageSize"
+          :total="featuredTotal"
+          @change="handleFeaturedPageChange"
+        />
+      </div>
     </section>
 
     <!-- ============================================================
          主体：文章列表 + 侧栏
          ============================================================ -->
     <main ref="articlesAnchor" class="container-page flex-1 pb-20">
-      <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-10 lg:gap-14">
+      <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-10 lg:gap-14">
         <!-- 文章列表 -->
         <section>
           <header class="mb-7 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between border-b border-[var(--border)] pb-5">
@@ -154,15 +155,6 @@
               <p class="mt-1 text-sm text-[var(--text-muted)] tabular-nums">
                 共 {{ total }} 篇 · 第 {{ currentPage }} / {{ Math.max(1, Math.ceil(total / pageSize)) }} 页
               </p>
-            </div>
-            <div class="w-full sm:w-72">
-              <UInput
-                v-model="searchKeyword"
-                placeholder="按 Enter 在站内搜索…"
-                size="md"
-                :prefix-icon="Search"
-                @keyup.enter="handleSearch"
-              />
             </div>
           </header>
 
@@ -194,82 +186,48 @@
 
         <!-- 侧栏 -->
         <aside class="space-y-7 lg:sticky lg:top-24 self-start">
-          <!-- 关于卡 -->
-          <div class="relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-sm)]">
-            <div aria-hidden="true" class="absolute -top-12 -right-12 size-32 bg-[var(--brand)]/15 rounded-full blur-2xl"></div>
-            <p class="eyebrow">About</p>
-            <h3 class="mt-2 font-display text-lg font-semibold text-[var(--text)]">
-              你好 👋
-            </h3>
-            <p class="mt-2 text-sm leading-relaxed text-[var(--text-soft)]">
-              欢迎来到 <span class="font-medium text-[var(--text)]">{{ siteStore.config.site_name }}</span>，这里记录我学习与思考的一切。
-            </p>
-            <router-link
-              to="/search"
-              class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-[var(--brand)] hover:gap-2 transition-all"
-            >
-              开始探索 <ArrowRight class="size-3.5" />
-            </router-link>
-          </div>
-
           <!-- 分类 -->
-          <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-sm)]">
-            <div class="flex items-center justify-between mb-3">
-              <p class="eyebrow">Categories</p>
-              <Folder class="size-3.5 text-[var(--text-muted)]" />
+          <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-sm)]">
+            <div class="flex items-center justify-between mb-4">
+              <p class="eyebrow text-xs">Categories</p>
+              <Folder class="size-4 text-[var(--text-muted)]" />
             </div>
-            <div class="space-y-1">
+            <div class="space-y-2">
               <router-link
                 v-for="cat in categories"
                 :key="cat.id"
                 :to="`/category/${cat.id}`"
-                class="group flex items-center justify-between rounded-lg px-3 py-2 text-sm text-[var(--text-soft)] hover:bg-[var(--bg-muted)] hover:text-[var(--text)] transition-colors"
+                class="group flex items-center justify-between rounded-xl px-4 py-3 text-[15px] text-[var(--text-soft)] hover:bg-[var(--bg-muted)] hover:text-[var(--text)] transition-colors"
               >
                 <span class="truncate flex items-center gap-2">
-                  <span class="inline-block size-1.5 rounded-full bg-[var(--brand)]/50 group-hover:bg-[var(--brand)] transition-colors"></span>
+                  <span class="inline-block size-2 rounded-full bg-[var(--brand)]/50 group-hover:bg-[var(--brand)] transition-colors"></span>
                   {{ cat.name }}
                 </span>
-                <span class="text-xs text-[var(--text-muted)] tabular-nums">{{ cat.article_count }}</span>
+                <span class="text-sm text-[var(--text-muted)] tabular-nums">{{ cat.article_count }}</span>
               </router-link>
-              <p v-if="categories.length === 0" class="px-3 py-2 text-xs text-[var(--text-muted)]">暂无分类</p>
+              <p v-if="categories.length === 0" class="px-4 py-3 text-sm text-[var(--text-muted)]">暂无分类</p>
             </div>
           </div>
 
           <!-- 标签云 -->
-          <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-sm)]">
-            <div class="flex items-center justify-between mb-3">
-              <p class="eyebrow">Tags</p>
-              <Hash class="size-3.5 text-[var(--text-muted)]" />
+          <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-sm)]">
+            <div class="flex items-center justify-between mb-4">
+              <p class="eyebrow text-xs">Tags</p>
+              <Hash class="size-4 text-[var(--text-muted)]" />
             </div>
-            <div class="flex flex-wrap gap-1.5">
+            <div class="flex flex-wrap gap-2">
               <router-link
                 v-for="tag in tags"
                 :key="tag.id"
                 :to="`/tag/${tag.id}`"
-                class="inline-flex items-center px-2.5 py-1 text-xs rounded-md border border-[var(--border)] text-[var(--text-soft)] hover:border-[var(--brand)] hover:text-[var(--brand)] hover:bg-[var(--brand-soft)] transition-colors"
+                class="inline-flex items-center px-3 py-1.5 text-sm rounded-lg border border-[var(--border)] text-[var(--text-soft)] hover:border-[var(--brand)] hover:text-[var(--brand)] hover:bg-[var(--brand-soft)] transition-colors"
               >
                 #{{ tag.name }}
               </router-link>
-              <p v-if="tags.length === 0" class="text-xs text-[var(--text-muted)]">暂无标签</p>
+              <p v-if="tags.length === 0" class="text-sm text-[var(--text-muted)]">暂无标签</p>
             </div>
           </div>
 
-          <!-- 最新文章 compact -->
-          <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-sm)]">
-            <div class="flex items-center justify-between mb-2">
-              <p class="eyebrow">Recent</p>
-              <BookOpen class="size-3.5 text-[var(--text-muted)]" />
-            </div>
-            <div class="divide-y divide-[var(--border)]">
-              <ArticleCard
-                v-for="art in latestArticles"
-                :key="art.id"
-                :article="art"
-                variant="compact"
-              />
-              <p v-if="latestArticles.length === 0" class="py-3 text-xs text-[var(--text-muted)]">暂无文章</p>
-            </div>
-          </div>
         </aside>
       </div>
     </main>
@@ -280,33 +238,42 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, useTemplateRef } from 'vue'
-import { useRouter } from 'vue-router'
-import { getArticles, getCategories, getTags, type Article, type Category, type Tag } from '@/api/articles'
+import {
+  getArticles,
+  getArticleStatsSummary,
+  getCategories,
+  getTags,
+  type Article,
+  type Category,
+  type Tag,
+} from '@/api/articles'
 import { getWeather } from '@/api/ai'
 import { useSiteStore } from '@/stores/site'
 import {
-  Sparkles, Search, Folder, Hash, BookOpen, CloudSun, ArrowRight,
+  Sparkles, Folder, Hash, CloudSun, ArrowRight, BookOpen,
 } from 'lucide-vue-next'
-import { UInput, UEmpty, USkeleton, UPagination, toast } from '@/ui'
+import { UEmpty, USkeleton, UPagination, toast } from '@/ui'
 import ArticleCard from '../components/ArticleCard.vue'
 import SiteNavbar from '../components/SiteNavbar.vue'
 import SiteFooter from '../components/SiteFooter.vue'
 
-const router = useRouter()
 const siteStore = useSiteStore()
 
 const articlesAnchor = useTemplateRef<HTMLElement>('articlesAnchor')
 
-const searchKeyword = ref('')
 const articles = ref<Article[]>([])
 const latestArticles = ref<Article[]>([])
 const featuredArticle = ref<Article | null>(null)
+const featuredCurrentPage = ref(1)
+const featuredPageSize = ref(1)
+const featuredTotal = ref(0)
 const categories = ref<Category[]>([])
 const tags = ref<Tag[]>([])
 
 const currentPage = ref(1)
 const pageSize = ref(8)
 const total = ref(0)
+const totalViews = ref(0)
 const loading = ref(false)
 const weatherLoading = ref(false)
 const weather = ref({
@@ -318,10 +285,6 @@ const weather = ref({
 })
 
 const stats = computed(() => ({ total: total.value }))
-const totalViews = computed(() =>
-  articles.value.reduce((acc, a) => acc + (a.view_count ?? 0), 0)
-    + latestArticles.value.reduce((acc, a) => acc + (a.view_count ?? 0), 0)
-)
 
 const today = computed(() =>
   new Date().toLocaleDateString('zh-CN', {
@@ -332,9 +295,7 @@ const today = computed(() =>
 )
 
 const formatNumber = (n: number) => {
-  if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
-  return String(n)
+  return n.toLocaleString('zh-CN')
 }
 
 const fetchArticles = async () => {
@@ -361,11 +322,32 @@ const fetchLatestArticles = async () => {
     const res = await getArticles({ page: 1, page_size: 5, is_published: true })
     const items = res.data?.data?.items ?? []
     latestArticles.value = items
-    const featured = items.find((a) => a.is_featured)
-    featuredArticle.value = featured || items[0] || null
   } catch (e) {
     console.warn('获取最新文章失败', e)
   }
+}
+
+const fetchFeaturedArticle = async () => {
+  try {
+    const res = await getArticles({
+      page: featuredCurrentPage.value,
+      page_size: featuredPageSize.value,
+      is_published: true,
+      is_featured: true,
+    })
+    const data = res.data?.data ?? { items: [], total: 0 }
+    const items = data.items ?? []
+    featuredArticle.value = items[0] || null
+    featuredTotal.value = data.total ?? 0
+  } catch (e) {
+    console.warn('获取精选文章失败', e)
+    featuredArticle.value = null
+    featuredTotal.value = 0
+  }
+}
+
+const handleFeaturedPageChange = () => {
+  fetchFeaturedArticle()
 }
 
 const fetchCategoriesAndTags = async () => {
@@ -378,9 +360,12 @@ const fetchCategoriesAndTags = async () => {
   }
 }
 
-const handleSearch = () => {
-  if (searchKeyword.value.trim()) {
-    router.push({ path: '/search', query: { q: searchKeyword.value.trim() } })
+const fetchTotalViews = async () => {
+  try {
+    const res = await getArticleStatsSummary()
+    totalViews.value = res.data?.data?.total_views ?? totalViews.value
+  } catch (e) {
+    console.warn('获取阅读量统计失败', e)
   }
 }
 
@@ -414,7 +399,9 @@ const fetchWeather = async () => {
 
 onMounted(() => {
   fetchArticles()
+  fetchTotalViews()
   fetchLatestArticles()
+  fetchFeaturedArticle()
   fetchCategoriesAndTags()
   fetchWeather()
 })

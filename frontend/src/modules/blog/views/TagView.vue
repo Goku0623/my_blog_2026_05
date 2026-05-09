@@ -8,13 +8,6 @@
       <div aria-hidden="true" class="hero-orb size-[320px] top-0 left-[-100px] bg-[var(--brand)]/15"></div>
 
       <div class="container-page relative pt-12 sm:pt-16 pb-10">
-        <button
-          class="mb-8 inline-flex items-center gap-1.5 text-sm text-[var(--text-soft)] hover:text-[var(--brand)] transition-colors"
-          @click="$router.back()"
-        >
-          <ArrowLeft class="size-4" /> 返回
-        </button>
-
         <div class="max-w-3xl">
           <div class="flex items-center gap-2 mb-4">
             <span class="eyebrow"><Hash class="size-3" /> 标签</span>
@@ -55,7 +48,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, Hash, FileText } from 'lucide-vue-next'
+import { Hash, FileText } from 'lucide-vue-next'
 import { getArticles, getTags, type Article, type Tag } from '@/api/articles'
 import SiteNavbar from '../components/SiteNavbar.vue'
 import SiteFooter from '../components/SiteFooter.vue'

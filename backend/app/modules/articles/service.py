@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 from tortoise.expressions import F
+from tortoise.functions import Sum
 from tortoise.queryset import Q
 
 from app.modules.articles.models import (
@@ -343,6 +344,7 @@ class ArticleService:
         category_id: Optional[int] = None,
         tag_id: Optional[int] = None,
         keyword: Optional[str] = None,
+        is_featured: Optional[bool] = None,
         is_admin: bool = False
     ) -> Dict:
         query = Article.all()
@@ -365,8 +367,13 @@ class ArticleService:
                 Q(content__icontains=keyword) | 
                 Q(summary__icontains=keyword)
             )
+
+        if is_featured is not None:
+            query = query.filter(is_featured=is_featured)
         
         total = await query.count()
+        total_views_result = await query.annotate(total_views=Sum("view_count")).values("total_views")
+        total_views = total_views_result[0]["total_views"] if total_views_result and total_views_result[0]["total_views"] else 0
         
         query = query.order_by("-published_at", "-created_at")
         
@@ -378,6 +385,7 @@ class ArticleService:
         return {
             "items": items,
             "total": total,
+            "total_views": total_views,
             "page": page,
             "page_size": page_size,
             "total_pages": total_pages

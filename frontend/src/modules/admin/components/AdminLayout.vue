@@ -185,7 +185,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { changePassword, updateAdminProfile } from '@/api/auth'
 import {
-  LayoutDashboard, FileText, MessageSquare,
+  LayoutDashboard, FileText, MessageSquare, StickyNote,
   Settings, BarChart3, ShieldAlert, History,
   Menu, ChevronDown, LogOut, Sun, Moon, ExternalLink,
   PanelLeftClose, PanelLeftOpen,
@@ -200,6 +200,7 @@ const navItems = [
   { path: '/admin/dashboard', label: '仪表盘', icon: LayoutDashboard },
   { path: '/admin/articles', label: '文章管理', icon: FileText },
   { path: '/admin/comments', label: '评论管理', icon: MessageSquare },
+  { path: '/admin/guestbook', label: '留言管理', icon: StickyNote },
   { path: '/admin/statistics', label: '数据统计', icon: BarChart3 },
   { path: '/admin/sensitive-words', label: '敏感词', icon: ShieldAlert },
   { path: '/admin/operation-logs', label: '操作日志', icon: History },

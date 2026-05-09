@@ -23,13 +23,6 @@
         <div aria-hidden="true" class="hero-orb size-[360px] top-0 right-[-100px] bg-[var(--accent)]/20"></div>
 
         <div class="container-page relative pt-10 sm:pt-14 lg:pt-16 pb-10 sm:pb-12">
-          <button
-            class="mb-8 inline-flex items-center gap-1.5 text-sm text-[var(--text-soft)] hover:text-[var(--brand)] transition-colors"
-            @click="$router.back()"
-          >
-            <ArrowLeft class="size-4" /> 返回
-          </button>
-
           <div class="max-w-3xl">
             <div class="flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)] mb-5">
               <router-link
@@ -230,7 +223,7 @@ import { getArticle, type Article } from '@/api/articles'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { useSiteStore } from '@/stores/site'
 import { formatFriendlyTime } from '@/utils/time'
-import { ArrowLeft, ArrowUp, ArrowRight, Calendar, Eye, Folder, Hash, Clock } from 'lucide-vue-next'
+import { ArrowUp, ArrowRight, Calendar, Eye, Folder, Hash, Clock } from 'lucide-vue-next'
 import { UEmpty, USkeleton, toast } from '@/ui'
 import CommentSection from '../components/CommentSection.vue'
 import SiteNavbar from '../components/SiteNavbar.vue'

@@ -63,6 +63,7 @@ class ArticleCreate(BaseModel):
     tag_ids: List[int] = Field(default_factory=list)
     status: str = Field(default="draft")
     cover_image: Optional[str] = None
+    is_featured: bool = False
     allow_comment: bool = True
     seo_title: Optional[str] = Field(None, max_length=200)
     seo_description: Optional[str] = Field(None, max_length=500)
@@ -77,6 +78,7 @@ class ArticleUpdate(BaseModel):
     tag_ids: Optional[List[int]] = None
     status: Optional[str] = None
     cover_image: Optional[str] = None
+    is_featured: Optional[bool] = None
     allow_comment: Optional[bool] = None
     seo_title: Optional[str] = Field(None, max_length=200)
     seo_description: Optional[str] = Field(None, max_length=500)

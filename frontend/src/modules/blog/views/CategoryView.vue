@@ -4,34 +4,24 @@
 
     <!-- Hero -->
     <section class="relative overflow-hidden">
-      <div aria-hidden="true" class="hero-orb size-[400px] -top-32 -left-24 bg-[var(--brand)]/20"></div>
-      <div aria-hidden="true" class="hero-orb size-[320px] top-0 right-[-100px] bg-[var(--accent)]/15"></div>
+      <div aria-hidden="true" class="hero-orb size-[400px] -top-32 -right-24 bg-[var(--accent)]/20"></div>
+      <div aria-hidden="true" class="hero-orb size-[320px] top-0 left-[-100px] bg-[var(--brand)]/15"></div>
 
       <div class="container-page relative pt-12 sm:pt-16 pb-10">
-        <button
-          class="mb-8 inline-flex items-center gap-1.5 text-sm text-[var(--text-soft)] hover:text-[var(--brand)] transition-colors"
-          @click="$router.back()"
-        >
-          <ArrowLeft class="size-4" /> 返回
-        </button>
-
         <div class="max-w-3xl">
           <div class="flex items-center gap-2 mb-4">
             <span class="eyebrow"><Folder class="size-3" /> 分类</span>
           </div>
           <h1 class="hero-headline text-[clamp(2rem,5vw,3.75rem)] text-[var(--text)] leading-[1.1]">
-            {{ category?.name || '加载中…' }}
+            <span class="text-gradient-brand">{{ category?.name || '加载中…' }}</span>
           </h1>
-          <p v-if="category?.description" class="mt-4 text-base sm:text-lg text-[var(--text-soft)] leading-relaxed">
-            {{ category.description }}
-          </p>
-          <div class="mt-6 flex items-center gap-3 text-sm text-[var(--text-muted)]">
+          <p class="mt-6 flex items-center gap-3 text-sm text-[var(--text-muted)]">
             <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--border)] bg-[var(--surface)]/60">
               <FileText class="size-3.5" />
               <span class="tabular-nums">{{ total }}</span>
               <span>篇文章</span>
             </span>
-          </div>
+          </p>
         </div>
       </div>
     </section>
@@ -57,7 +47,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, Folder, FileText } from 'lucide-vue-next'
+import { Folder, FileText } from 'lucide-vue-next'
 import { getArticles, getCategories, type Article, type Category } from '@/api/articles'
 import SiteNavbar from '../components/SiteNavbar.vue'
 import SiteFooter from '../components/SiteFooter.vue'
@@ -96,7 +86,7 @@ const fetchArticles = async () => {
     articles.value = data.items || []
     total.value = data.total || 0
   } catch {
-    toast.error('获取文章失败')
+    toast.error('获取分类文章失败')
   } finally {
     loading.value = false
   }

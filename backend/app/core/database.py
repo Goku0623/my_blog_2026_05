@@ -12,6 +12,7 @@ TORTOISE_ORM = {
                 "app.modules.auth.models",
                 "app.modules.articles.models",
                 "app.modules.comments.models",
+                "app.modules.guestbook.models",
                 "app.modules.system.models",
                 "app.modules.statistics.models",
                 "aerich.models",

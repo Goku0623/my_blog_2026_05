@@ -46,13 +46,19 @@ export interface ArticleListParams {
   keyword?: string
   is_published?: boolean
   status_filter?: string
+  is_featured?: boolean
 }
 
 export interface ArticleListResponse {
   items: Article[]
   total: number
+  total_views?: number
   page: number
   page_size: number
+}
+
+export interface ArticleStatsSummary {
+  total_views: number
 }
 
 export interface Category {
@@ -80,6 +86,11 @@ export interface TagPayload {
 // 获取文章列表（前台）
 export const getArticles = (params: ArticleListParams) => {
   return request.get<{ data: ArticleListResponse }>('/articles', { params })
+}
+
+// 获取文章统计概览（前台）
+export const getArticleStatsSummary = () => {
+  return request.get<{ data: ArticleStatsSummary }>('/articles/stats/summary')
 }
 
 // 获取文章详情（前台）

@@ -126,6 +126,10 @@
               />
             </div>
             <div class="flex items-center justify-between">
+              <label class="text-sm text-[var(--text)]">精选阅读</label>
+              <USwitch v-model="formData.is_featured" />
+            </div>
+            <div class="flex items-center justify-between">
               <label class="text-sm text-[var(--text)]">允许评论</label>
               <USwitch v-model="formData.allow_comment" />
             </div>
@@ -203,6 +207,7 @@ const formData = reactive({
   category_id: undefined as number | undefined,
   tag_ids: [] as number[],
   cover_image: '',
+  is_featured: false,
   allow_comment: true,
   status: 'draft',
   seo_title: '',
@@ -252,6 +257,7 @@ const fetchArticle = async () => {
     formData.category_id = data.category?.id ?? data.category_id
     formData.tag_ids = (data.tags ?? []).map((t: any) => t.id)
     formData.cover_image = data.cover_image ?? ''
+    formData.is_featured = data.is_featured === true
     formData.status = data.status ?? 'draft'
     originalStatus.value = data.status ?? 'draft'
     isDraftCopy.value = Boolean(data.is_draft_copy)

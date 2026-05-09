@@ -13,6 +13,7 @@ from app.modules.auth.models import AdminUser
 from app.common.response import success
 from app.common.exceptions import NotFoundException, BadRequestException
 from app.modules.system.service import OperationLogService
+from app.modules.statistics.service import StatisticsService
 
 
 router = APIRouter(tags=["Articles"])
@@ -70,7 +71,8 @@ async def list_articles_public(
     page_size: int = Query(10, ge=1, le=100),
     category_id: Optional[int] = None,
     tag_id: Optional[int] = None,
-    keyword: Optional[str] = None
+    keyword: Optional[str] = None,
+    is_featured: Optional[bool] = None
 ):
     try:
         result = await ArticleService.list_articles(
@@ -79,6 +81,7 @@ async def list_articles_public(
             category_id=category_id,
             tag_id=tag_id,
             keyword=keyword,
+            is_featured=is_featured,
             is_admin=False
         )
 
@@ -121,6 +124,20 @@ async def search_articles(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while searching articles"
+        )
+
+
+@router.get("/articles/stats/summary", response_model=dict)
+async def get_articles_stats_summary():
+    try:
+        dashboard = await StatisticsService.get_dashboard_data()
+        return success({
+            "total_views": dashboard.total_views,
+        })
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while fetching article statistics summary"
         )
 
 
@@ -219,6 +236,7 @@ async def list_articles_admin(
     category_id: Optional[int] = None,
     tag_id: Optional[int] = None,
     keyword: Optional[str] = None,
+    is_featured: Optional[bool] = None,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
@@ -229,6 +247,7 @@ async def list_articles_admin(
             category_id=category_id,
             tag_id=tag_id,
             keyword=keyword,
+            is_featured=is_featured,
             is_admin=True
         )
 
