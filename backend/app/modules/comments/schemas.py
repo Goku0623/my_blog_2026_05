@@ -55,7 +55,7 @@ class CommentListResponse(BaseModel):
 
 
 class AdminCommentAction(BaseModel):
-    action: str = Field(..., pattern="^(pin|unpin|approve|hide|delete)$")
+    action: str = Field(..., pattern="^(pin|unpin|hide|approve|delete)$")
     reason: Optional[str] = None
 
 

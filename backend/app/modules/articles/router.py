@@ -12,9 +12,28 @@ from app.core.dependencies import get_current_admin, get_client_ip
 from app.modules.auth.models import AdminUser
 from app.common.response import success
 from app.common.exceptions import NotFoundException, BadRequestException
+from app.modules.system.service import OperationLogService
 
 
 router = APIRouter(tags=["Articles"])
+
+
+async def _log_article_operation(
+    action: str,
+    current_admin: AdminUser,
+    request: Request,
+    article_id: Optional[int] = None,
+    detail: Optional[str] = None,
+):
+    await OperationLogService.log_operation(
+        operator=current_admin.username,
+        action=action,
+        target_type="article",
+        target_id=article_id,
+        detail=detail,
+        ip=get_client_ip(request),
+        result="success",
+    )
 
 
 async def _serialize_article_list_item(article) -> dict:
@@ -25,6 +44,7 @@ async def _serialize_article_list_item(article) -> dict:
         if article_tag.tag:
             tags.append(TagOut.model_validate(article_tag.tag).model_dump())
 
+    draft_link = await ArticleService.get_draft_link_by_draft_id(article.id)
     return {
         "id": article.id,
         "title": article.title,
@@ -39,6 +59,8 @@ async def _serialize_article_list_item(article) -> dict:
         "published_at": article.published_at,
         "created_at": article.created_at,
         "updated_at": article.updated_at,
+        "is_draft_copy": bool(draft_link),
+        "source_article_id": draft_link.source_article_id if draft_link else None,
     }
 
 
@@ -73,6 +95,35 @@ async def list_articles_public(
         )
 
 
+@router.get("/articles/search", response_model=dict)
+async def search_articles(
+    keyword: str = Query(..., min_length=1),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    search_in: str = Query("title_summary", pattern="^(title|summary|title_summary)$"),
+    time_filter: str = Query("all", pattern="^(all|7d|30d|90d|365d)$"),
+):
+    try:
+        result = await ArticleService.search_articles(
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+            search_in=search_in,
+            time_filter=time_filter,
+        )
+        serialized_items = []
+        for article in result["items"]:
+            serialized_items.append(await _serialize_article_list_item(article))
+
+        result["items"] = serialized_items
+        return success(result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while searching articles"
+        )
+
+
 @router.get("/articles/{slug}", response_model=dict)
 async def get_article_by_slug(slug: str, request: Request):
     try:
@@ -87,7 +138,9 @@ async def get_article_by_slug(slug: str, request: Request):
         ip_address = get_client_ip(request)
         user_agent = request.headers.get("User-Agent", "")
         
-        await ArticleService.increment_view_count(article.id, ip_address, user_agent)
+        incremented = await ArticleService.increment_view_count(article.id, ip_address, user_agent)
+        if incremented:
+            article.view_count += 1
         
         category = await article.category if article.category_id else None
         tags = []
@@ -117,6 +170,9 @@ async def get_article_by_slug(slug: str, request: Request):
             "created_at": article.created_at,
             "updated_at": article.updated_at,
         }
+        draft_link = await ArticleService.get_draft_link_by_draft_id(article.id)
+        article_dict["is_draft_copy"] = bool(draft_link)
+        article_dict["source_article_id"] = draft_link.source_article_id if draft_link else None
         
         return success(article_dict)
     except HTTPException:
@@ -125,27 +181,6 @@ async def get_article_by_slug(slug: str, request: Request):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while fetching the article"
-        )
-
-
-@router.get("/articles/search", response_model=dict)
-async def search_articles(
-    keyword: str = Query(..., min_length=1),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100)
-):
-    try:
-        result = await ArticleService.search_articles(keyword, page, page_size)
-        serialized_items = []
-        for article in result["items"]:
-            serialized_items.append(await _serialize_article_list_item(article))
-
-        result["items"] = serialized_items
-        return success(result)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while searching articles"
         )
 
 
@@ -213,6 +248,7 @@ async def list_articles_admin(
 @admin_router.post("/articles", response_model=dict)
 async def create_article(
     article_data: ArticleCreate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
@@ -247,6 +283,13 @@ async def create_article(
             "updated_at": article.updated_at,
         }
         
+        await _log_article_operation(
+            action="article_create",
+            current_admin=current_admin,
+            request=request,
+            article_id=article.id,
+            detail=f"创建文章：{article.title}",
+        )
         return success(article_dict, "Article created successfully")
     except BadRequestException as e:
         raise HTTPException(
@@ -309,6 +352,9 @@ async def get_article_admin(
             "created_at": article.created_at,
             "updated_at": article.updated_at,
         }
+        draft_link = await ArticleService.get_draft_link_by_draft_id(article.id)
+        article_dict["is_draft_copy"] = bool(draft_link)
+        article_dict["source_article_id"] = draft_link.source_article_id if draft_link else None
         
         return success(article_dict)
     except HTTPException:
@@ -324,6 +370,7 @@ async def get_article_admin(
 async def update_article(
     article_id: int,
     article_data: ArticleUpdate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
@@ -357,7 +404,17 @@ async def update_article(
             "created_at": article.created_at,
             "updated_at": article.updated_at,
         }
+        draft_link = await ArticleService.get_draft_link_by_draft_id(article.id)
+        article_dict["is_draft_copy"] = bool(draft_link)
+        article_dict["source_article_id"] = draft_link.source_article_id if draft_link else None
         
+        await _log_article_operation(
+            action="article_update",
+            current_admin=current_admin,
+            request=request,
+            article_id=article.id,
+            detail=f"更新文章：{article.title}",
+        )
         return success(article_dict, "Article updated successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -374,11 +431,21 @@ async def update_article(
 @admin_router.delete("/articles/{article_id}", response_model=dict)
 async def delete_article(
     article_id: int,
-    hard_delete: bool = Query(False),
+    request: Request,
+    hard_delete: bool = Query(True),
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
+        article = await ArticleService.get_article_by_id(article_id)
+        article_title = article.title if article else f"#{article_id}"
         await ArticleService.delete_article(article_id, hard_delete=hard_delete)
+        await _log_article_operation(
+            action="article_delete" if hard_delete else "article_soft_delete",
+            current_admin=current_admin,
+            request=request,
+            article_id=article_id,
+            detail=f"{'彻底删除' if hard_delete else '软删除'}文章：{article_title}",
+        )
         return success(None, "Article deleted successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -395,10 +462,18 @@ async def delete_article(
 @admin_router.post("/articles/{article_id}/publish", response_model=dict)
 async def publish_article(
     article_id: int,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
         article = await ArticleService.publish_article(article_id)
+        await _log_article_operation(
+            action="article_publish",
+            current_admin=current_admin,
+            request=request,
+            article_id=article.id,
+            detail=f"发布文章：{article.title}",
+        )
         return success({"status": article.status}, "Article published successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -415,15 +490,93 @@ async def publish_article(
 @admin_router.post("/articles/{article_id}/unpublish", response_model=dict)
 async def unpublish_article(
     article_id: int,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
         article = await ArticleService.unpublish_article(article_id)
+        await _log_article_operation(
+            action="article_unpublish",
+            current_admin=current_admin,
+            request=request,
+            article_id=article.id,
+            detail=f"下架文章：{article.title}",
+        )
         return success({"status": article.status}, "Article unpublished successfully")
     except NotFoundException as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=e.message
+        )
+
+
+@admin_router.post("/articles/{article_id}/draft", response_model=dict)
+async def create_or_update_article_draft(
+    article_id: int,
+    article_data: ArticleUpdate,
+    current_admin: AdminUser = Depends(get_current_admin)
+):
+    try:
+        draft = await ArticleService.create_or_update_draft_copy(article_id, article_data)
+        category = await draft.category if draft.category_id else None
+        tags = []
+        article_tags = await draft.article_tags.all().prefetch_related("tag")
+        for at in article_tags:
+            if at.tag:
+                tags.append(at.tag)
+        article_dict = {
+            "id": draft.id,
+            "title": draft.title,
+            "slug": draft.slug,
+            "summary": draft.summary,
+            "content": draft.content,
+            "rendered_content": draft.rendered_content,
+            "status": draft.status,
+            "category": CategoryOut.model_validate(category) if category else None,
+            "tags": [TagOut.model_validate(tag) for tag in tags],
+            "cover_image": draft.cover_image,
+            "view_count": draft.view_count,
+            "is_featured": draft.is_featured,
+            "allow_comment": draft.allow_comment,
+            "seo_title": draft.seo_title,
+            "seo_description": draft.seo_description,
+            "seo_keywords": draft.seo_keywords,
+            "published_at": draft.published_at,
+            "created_at": draft.created_at,
+            "updated_at": draft.updated_at,
+            "is_draft_copy": True,
+            "source_article_id": article_id,
+        }
+        return success(article_dict, "Draft copy saved successfully")
+    except NotFoundException as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=e.message
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while saving draft copy"
+        )
+
+
+@admin_router.post("/articles/drafts/{draft_id}/publish", response_model=dict)
+async def publish_draft_to_source_article(
+    draft_id: int,
+    current_admin: AdminUser = Depends(get_current_admin)
+):
+    try:
+        article = await ArticleService.publish_from_draft_copy(draft_id)
+        return success({"id": article.id, "status": article.status}, "Draft published successfully")
+    except NotFoundException as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=e.message
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while publishing draft"
         )
     except Exception as e:
         raise HTTPException(

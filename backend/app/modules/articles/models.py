@@ -77,8 +77,29 @@ class ArticleView(Model):
     id = fields.IntField(pk=True)
     article = fields.ForeignKeyField("models.Article", related_name="views", on_delete=fields.CASCADE)
     ip_address = fields.CharField(max_length=50)
-    user_agent = fields.CharField(max_length=255, null=True)
+    user_agent = fields.TextField(null=True)
     viewed_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
         table = "article_views"
+
+
+class ArticleDraftLink(Model):
+    id = fields.IntField(pk=True)
+    source_article = fields.ForeignKeyField(
+        "models.Article",
+        related_name="draft_links",
+        on_delete=fields.CASCADE,
+    )
+    draft_article = fields.ForeignKeyField(
+        "models.Article",
+        related_name="source_links",
+        on_delete=fields.CASCADE,
+        unique=True,
+    )
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "article_draft_links"
+        unique_together = (("source_article", "draft_article"),)

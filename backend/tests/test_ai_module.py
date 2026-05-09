@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.modules.ai import service
-from app.modules.ai.schemas import AIChatResponse, AICommentReplyResponse, WeatherResponse
+from app.modules.ai.schemas import AICommentReplyResponse, WeatherResponse
 
 
 @pytest.mark.asyncio
@@ -97,17 +97,3 @@ async def test_generate_comment_reply(client: AsyncClient, auth_headers: dict, m
     )
     assert response.status_code == 200
     assert response.json()["data"]["model_used"] == "gpt-test"
-
-
-@pytest.mark.asyncio
-async def test_chat_with_ai(client: AsyncClient, monkeypatch):
-    async def _mock_chat(*args, **kwargs):
-        return AIChatResponse(reply="Hello from AI", model_used="gpt-test")
-
-    monkeypatch.setattr(service, "chat_with_ai", _mock_chat)
-    response = await client.post(
-        "/api/v1/ai/chat",
-        json={"message": "hello", "history": []},
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["reply"] == "Hello from AI"

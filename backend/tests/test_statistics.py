@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from httpx import AsyncClient
 
 from app.modules.statistics import service
+from app.modules.statistics.models import DailyStats
 from app.modules.statistics.schemas import (
     APIMonitorResponse,
     APIMetrics,
@@ -27,8 +28,6 @@ async def test_dashboard_and_trends(client: AsyncClient, auth_headers: dict, mon
             draft_articles=2,
             total_views=1000,
             total_comments=200,
-            pending_comments=5,
-            online_users=3,
             today_views=20,
             today_comments=4,
             today_new_articles=1,
@@ -142,3 +141,25 @@ async def test_monitor_health_and_rankings(client: AsyncClient, auth_headers: di
     )
     assert recent.status_code == 200
     assert recent.json()["data"][0]["article_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_trend_month_endpoint_should_not_500(client: AsyncClient, auth_headers: dict):
+    await DailyStats.create(
+        stat_date=date.today(),
+        new_articles=1,
+        total_views=100,
+        new_comments=2,
+        unique_visitors=3,
+    )
+
+    resp = await client.get(
+        "/api/v1/admin/statistics/trends",
+        params={"metric": "views", "period": "month"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    payload = resp.json()["data"]
+    assert payload["metric"] == "views"
+    assert payload["period"] == "month"
+    assert isinstance(payload["data"], list)

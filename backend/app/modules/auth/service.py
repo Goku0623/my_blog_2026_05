@@ -20,6 +20,7 @@ class AuthService:
         cutoff = datetime.now() - timedelta(minutes=15)
         recent_attempts = await LoginAttempt.filter(
             ip_address=ip_address,
+            username_tried=username,
             success=False,
         ).values_list("attempted_at", flat=True)
         failed_attempts = 0
@@ -61,6 +62,11 @@ class AuthService:
             username_tried=username,
             success=True,
         )
+        await LoginAttempt.filter(
+            ip_address=ip_address,
+            username_tried=username,
+            success=False,
+        ).delete()
         
         return user
 
@@ -150,6 +156,40 @@ class AuthService:
         
         admin.hashed_password = hash_password(new_password)
         await admin.save()
+
+    @staticmethod
+    async def update_profile(admin: AdminUser, username: str, email: Optional[str]):
+        username = username.strip()
+        if not username:
+            raise BadRequestException("Username cannot be empty")
+
+        username_owner = await AdminUser.get_or_none(username=username)
+        if username_owner and username_owner.id != admin.id:
+            raise BadRequestException("Username already exists")
+
+        normalized_email = (email or "").strip() or None
+        if normalized_email:
+            email_owner = await AdminUser.get_or_none(email=normalized_email)
+            if email_owner and email_owner.id != admin.id:
+                raise BadRequestException("Email already exists")
+
+        admin.username = username
+        admin.email = normalized_email
+        await admin.save()
+
+        # 同步管理员对应的评论身份昵称，避免前端不同模块出现旧昵称。
+        from app.modules.comments.models import GuestIdentity
+        admin_guest = await GuestIdentity.get_or_none(guest_token=f"admin-{admin.id}")
+        if admin_guest:
+            admin_guest.nickname = username
+            try:
+                await admin_guest.save()
+            except Exception:
+                # GuestIdentity 昵称有唯一约束，冲突时保持原值；
+                # 展示层仍会优先解析为当前管理员用户名。
+                pass
+
+        return admin
 
     @staticmethod
     async def create_first_admin():

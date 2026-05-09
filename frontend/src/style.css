@@ -1,0 +1,495 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+ * 设计令牌（亮 / 暗双色）
+ * 风格：现代杂志 + 暗夜深邃 + 紫粉品牌渐变
+ * ============================================================ */
+@theme {
+  --font-sans:
+    "Inter", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-display:
+    "Cal Sans", "Inter", "PingFang SC", -apple-system, "Segoe UI", "Roboto", sans-serif;
+  --font-serif: "Source Serif 4", "Lora", "Georgia", "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  --color-brand-50: #faf5ff;
+  --color-brand-100: #f3e8ff;
+  --color-brand-200: #e9d5ff;
+  --color-brand-300: #d8b4fe;
+  --color-brand-400: #c084fc;
+  --color-brand-500: #a855f7;
+  --color-brand-600: #9333ea;
+  --color-brand-700: #7e22ce;
+  --color-brand-800: #6b21a8;
+  --color-brand-900: #581c87;
+}
+
+/* ---- 主题变量：亮色 ---- */
+:root {
+  --bg: #fbfbfd;
+  --bg-soft: #f5f5f8;
+  --bg-muted: #ececf2;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-glass: rgba(255, 255, 255, 0.7);
+  --border: #e7e7ec;
+  --border-strong: #d4d4dc;
+  --text: #0c0d10;
+  --text-soft: #4a4d57;
+  --text-muted: #8a8d96;
+  --text-on-brand: #ffffff;
+
+  --brand: #7e22ce;
+  --brand-strong: #6b21a8;
+  --brand-soft: #f6ecff;
+  --brand-glow: rgba(168, 85, 247, 0.18);
+
+  --accent: #ec4899;
+  --accent-soft: #ffe7f3;
+
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #3b82f6;
+
+  --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-md: 0 4px 14px -3px rgb(15 23 42 / 0.1), 0 2px 4px -2px rgb(15 23 42 / 0.05);
+  --shadow-lg: 0 18px 40px -12px rgb(15 23 42 / 0.18), 0 8px 16px -8px rgb(15 23 42 / 0.08);
+  --shadow-xl: 0 30px 60px -20px rgb(15 23 42 / 0.22), 0 12px 24px -12px rgb(15 23 42 / 0.1);
+  --shadow-glow: 0 0 0 4px rgb(126 34 206 / 0.12);
+
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+
+  --grid-line: rgba(15, 23, 42, 0.06);
+}
+
+/* ---- 主题变量：暗色（深邃午夜紫蓝） ---- */
+.dark {
+  --bg: #0a0a0f;
+  --bg-soft: #0f1018;
+  --bg-muted: #161824;
+  --surface: #11121b;
+  --surface-elevated: #181a26;
+  --surface-glass: rgba(20, 22, 33, 0.65);
+  --border: #232634;
+  --border-strong: #2e3242;
+  --text: #f5f5f7;
+  --text-soft: #c2c5d0;
+  --text-muted: #7a7e8e;
+  --text-on-brand: #ffffff;
+
+  --brand: #c084fc;
+  --brand-strong: #d8b4fe;
+  --brand-soft: #2c1755;
+  --brand-glow: rgba(192, 132, 252, 0.28);
+
+  --accent: #f472b6;
+  --accent-soft: #3b1330;
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-md: 0 8px 20px -6px rgb(0 0 0 / 0.55), 0 4px 8px -4px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 24px 50px -16px rgb(0 0 0 / 0.7), 0 10px 20px -10px rgb(0 0 0 / 0.45);
+  --shadow-xl: 0 36px 70px -22px rgb(0 0 0 / 0.8), 0 18px 30px -18px rgb(0 0 0 / 0.5);
+  --shadow-glow: 0 0 0 4px rgb(192 132 252 / 0.22);
+
+  --grid-line: rgba(255, 255, 255, 0.05);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  min-height: 100vh;
+  position: relative;
+  z-index: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+/* 滚动条 */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid var(--bg);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ============================================================
+ * 全局背景：双重渐变光晕 + 极淡网格（杂志风沉浸感）
+ * ============================================================ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -2;
+  background:
+    radial-gradient(720px 380px at 6% -8%, rgb(168 85 247 / 0.12), transparent 70%),
+    radial-gradient(720px 380px at 96% 0%, rgb(236 72 153 / 0.10), transparent 70%),
+    radial-gradient(900px 480px at 50% 110%, rgb(99 102 241 / 0.08), transparent 70%);
+}
+
+.dark body::before {
+  background:
+    radial-gradient(720px 420px at 8% -10%, rgb(192 132 252 / 0.18), transparent 65%),
+    radial-gradient(720px 420px at 96% 0%, rgb(244 114 182 / 0.12), transparent 70%),
+    radial-gradient(900px 480px at 50% 110%, rgb(99 102 241 / 0.12), transparent 70%);
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: -1px -1px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black, transparent 75%);
+}
+
+/* ============================================================
+ * 容器与通用工具类
+ * ============================================================ */
+@utility container-page {
+  max-width: 1280px;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+@utility container-tight {
+  max-width: 760px;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+@utility container-wide {
+  max-width: 1440px;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .container-page,
+  .container-tight,
+  .container-wide {
+    padding-inline: 1.75rem;
+  }
+}
+@media (min-width: 1024px) {
+  .container-page,
+  .container-tight,
+  .container-wide {
+    padding-inline: 2.5rem;
+  }
+}
+
+@utility surface-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+@utility text-gradient-brand {
+  background-image: linear-gradient(135deg, var(--brand) 0%, var(--accent) 70%, #f59e0b 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+@utility text-gradient-mono {
+  background-image: linear-gradient(180deg, var(--text) 0%, var(--text-soft) 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+@utility glass {
+  background: var(--surface-glass);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid var(--border);
+}
+
+@utility hairline-divider {
+  background-image: linear-gradient(to right, transparent, var(--border-strong), transparent);
+  height: 1px;
+}
+
+/* 衬线显示字体（标题用） */
+@utility font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+@utility font-serif {
+  font-family: var(--font-serif);
+}
+
+/* 网格分隔线（用于杂志网格） */
+@utility magazine-grid {
+  --col-gap: 1.5rem;
+  display: grid;
+  gap: var(--col-gap);
+}
+
+/* ============================================================
+ * 顶部阅读进度条
+ * ============================================================ */
+.reading-progress {
+  position: fixed;
+  inset: 0 auto auto 0;
+  height: 2px;
+  width: 100%;
+  background: transparent;
+  z-index: 60;
+  pointer-events: none;
+}
+.reading-progress > i {
+  display: block;
+  height: 100%;
+  width: var(--progress, 0%);
+  background: linear-gradient(90deg, var(--brand), var(--accent));
+  transition: width 80ms linear;
+  box-shadow: 0 0 16px var(--brand-glow);
+}
+
+/* ============================================================
+ * Markdown 文章 typography
+ * ============================================================ */
+.prose {
+  --tw-prose-body: var(--text-soft);
+  --tw-prose-headings: var(--text);
+  --tw-prose-links: var(--brand);
+  --tw-prose-bold: var(--text);
+  --tw-prose-code: var(--brand-strong);
+  --tw-prose-quotes: var(--text-soft);
+  --tw-prose-quote-borders: var(--brand);
+  --tw-prose-borders: var(--border);
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.85;
+}
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.prose pre {
+  background: var(--bg-muted) !important;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+}
+
+.prose code:not(pre code) {
+  background: var(--bg-muted);
+  color: var(--brand-strong);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+}
+
+.prose code:not(pre code)::before,
+.prose code:not(pre code)::after {
+  content: '';
+}
+
+.prose blockquote {
+  font-style: normal;
+  font-weight: 500;
+  border-left-width: 3px;
+  background: linear-gradient(90deg, var(--brand-soft), transparent);
+  padding-block: 0.6rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.prose img {
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+
+.prose a {
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  transition: text-decoration-color 0.2s ease;
+}
+.prose a:hover {
+  text-decoration-color: var(--brand);
+}
+
+/* ============================================================
+ * 通用动画
+ * ============================================================ */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes shimmer {
+  0% { background-position: -120% 0; }
+  100% { background-position: 220% 0; }
+}
+@keyframes float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -8px, 0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.32s ease-out both;
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s cubic-bezier(.2,.8,.2,1) both;
+}
+.animate-pulse-soft {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* 卡片标题底部下划线动效 */
+.link-underline {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1.5px;
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  transition: background-size 0.35s cubic-bezier(.2,.8,.2,1);
+}
+.link-underline:hover,
+.group:hover .link-underline {
+  background-size: 100% 1.5px;
+}
+
+/* 顶部导航悬浮投影 */
+.nav-floating {
+  box-shadow:
+    0 1px 0 0 var(--border),
+    0 8px 24px -16px rgb(15 23 42 / 0.18);
+}
+.dark .nav-floating {
+  box-shadow:
+    0 1px 0 0 var(--border),
+    0 12px 30px -16px rgb(0 0 0 / 0.6);
+}
+
+/* 大标题渐变描边光晕 */
+.hero-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(60px);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* 文章卡片悬浮辉光（仅暗色更强） */
+.card-glow {
+  position: relative;
+}
+.card-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--brand) 0%, var(--accent) 100%);
+  opacity: 0;
+  z-index: -1;
+  filter: blur(14px);
+  transition: opacity 0.4s ease;
+}
+.card-glow:hover::before {
+  opacity: 0.35;
+}
+
+/* 数字计量字体 */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* hero 大字「H1」拼贴样式 */
+.hero-headline {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 0.96;
+}
+
+/* 精选文章「Featured」装饰标签 */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+.eyebrow::before {
+  content: '';
+  width: 1.5rem;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.6;
+}

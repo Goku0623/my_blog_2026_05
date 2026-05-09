@@ -10,6 +10,7 @@ from app.modules.comments.models import GuestIdentity
 
 
 security = HTTPBearer()
+optional_security = HTTPBearer(auto_error=False)
 
 
 async def get_redis():
@@ -64,6 +65,17 @@ async def get_current_admin(
         )
     
     return user
+
+
+async def get_current_admin_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security),
+) -> Optional[AdminUser]:
+    if not credentials:
+        return None
+    try:
+        return await get_current_admin(credentials)
+    except HTTPException:
+        return None
 
 
 async def get_guest_identity(

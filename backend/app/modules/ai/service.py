@@ -1,11 +1,12 @@
 import json
 import httpx
+import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from redis.asyncio import Redis
 
 from app.common.exceptions import (
-    BadRequestException,
     BusinessException,
     NotFoundException,
     UnauthorizedException,
@@ -15,20 +16,21 @@ from app.modules.ai.schemas import (
     WeatherResponse,
     AICommentReplyRequest,
     AICommentReplyResponse,
-    AIChatRequest,
-    AIChatResponse,
-    ChatMessage,
 )
 from app.modules.articles.models import Article, Category, Tag, ArticleTag
 from app.modules.system.models import SiteConfig
 from app.modules.comments.models import Comment
 
+SHENZHEN_CITY_CODE = "440300"
+WEATHER_CACHE_PREFIX = f"weather:daily:amap:{SHENZHEN_CITY_CODE}"
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
 
 async def get_config_value(key: str, default: Optional[str] = None) -> Optional[str]:
     config = await SiteConfig.get_or_none(key=key)
-    if config:
+    if config and config.value not in (None, ""):
         return config.value
-    return default
+    return os.getenv(key, default)
 
 
 async def verify_n8n_secret(provided_secret: str) -> bool:
@@ -101,12 +103,13 @@ async def get_location_from_ip(ip: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-async def call_amap_weather(city: str, api_key: str) -> Optional[Dict[str, Any]]:
+async def call_amap_weather(city: str, api_key: str, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """调用高德地图天气 API"""
     try:
+        endpoint = f"{(base_url or 'https://restapi.amap.com').rstrip('/')}/v3/weather/weatherInfo"
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                "https://restapi.amap.com/v3/weather/weatherInfo",
+                endpoint,
                 params={
                     "key": api_key,
                     "city": city,
@@ -130,18 +133,19 @@ async def call_amap_weather(city: str, api_key: str) -> Optional[Dict[str, Any]]
                 "humidity": int(live.get("humidity", 0)),
                 "wind_speed": _parse_wind_speed(live.get("windpower", "0")),
                 "icon": "01d",
-                "updated_at": datetime.now(),
+                "updated_at": datetime.now(SHANGHAI_TZ),
             }
     except Exception:
         return None
 
 
-async def call_baidu_weather(lat: float, lon: float, api_key: str) -> Optional[Dict[str, Any]]:
+async def call_baidu_weather(lat: float, lon: float, api_key: str, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """调用百度地图天气 API"""
     try:
+        endpoint = f"{(base_url or 'https://api.map.baidu.com').rstrip('/')}/weather/v1/"
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                "https://api.map.baidu.com/weather/v1/",
+                endpoint,
                 params={
                     "ak": api_key,
                     "location": f"{lon},{lat}",
@@ -165,18 +169,19 @@ async def call_baidu_weather(lat: float, lon: float, api_key: str) -> Optional[D
                 "humidity": int(now.get("rh", 0)),
                 "wind_speed": float(now.get("wind_speed", 0)),
                 "icon": "01d",
-                "updated_at": datetime.now(),
+                "updated_at": datetime.now(SHANGHAI_TZ),
             }
     except Exception:
         return None
 
 
-async def call_openweather_api(lat: float, lon: float, api_key: str) -> Optional[Dict[str, Any]]:
+async def call_openweather_api(lat: float, lon: float, api_key: str, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """调用 OpenWeatherMap API"""
     try:
+        endpoint = f"{(base_url or 'https://api.openweathermap.org').rstrip('/')}/data/2.5/weather"
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                "https://api.openweathermap.org/data/2.5/weather",
+                endpoint,
                 params={
                     "lat": lat,
                     "lon": lon,
@@ -198,7 +203,7 @@ async def call_openweather_api(lat: float, lon: float, api_key: str) -> Optional
                 "humidity": data["main"]["humidity"],
                 "wind_speed": data["wind"]["speed"],
                 "icon": data["weather"][0]["icon"],
-                "updated_at": datetime.now(),
+                "updated_at": datetime.now(SHANGHAI_TZ),
             }
     except Exception:
         return None
@@ -220,57 +225,39 @@ async def get_weather(
     city: Optional[str] = None,
     redis: Optional[Redis] = None,
 ) -> WeatherResponse:
-    provider = await get_config_value("WEATHER_PROVIDER", "amap")
     api_key = await get_config_value("WEATHER_API_KEY")
-    
+    weather_api_base_url = await get_config_value("WEATHER_API_BASE_URL")
+
     if not api_key:
         raise BusinessException(500, "天气 API 密钥未配置")
-    
-    if not city:
-        if lat and lon:
-            location = {"city": "未知", "lat": lat, "lon": lon}
-        else:
-            location = await get_location_from_ip(ip)
-            if not location:
-                raise BadRequestException("无法获取位置信息")
-            lat = location["lat"]
-            lon = location["lon"]
-            city = location["city"]
-    
-    cache_key = f"weather:v2:{provider}:{city or f'{lat},{lon}'}"
-    stale_cache_key = f"{cache_key}:stale"
-    
+
+    # 锁定深圳：只使用高德城市编码 440300，缓存维度按“天”组织。
+    date_key = datetime.now(SHANGHAI_TZ).strftime("%Y%m%d")
+    today_cache_key = f"{WEATHER_CACHE_PREFIX}:{date_key}"
+    latest_cache_key = f"{WEATHER_CACHE_PREFIX}:latest"
+
     if redis:
-        cached = await redis.get(cache_key)
+        cached = await redis.get(today_cache_key)
         if cached:
-            data = json.loads(cached)
-            return WeatherResponse(**data)
-        
-        stale_cached = await redis.get(stale_cache_key)
-        if stale_cached:
-            stale_data = json.loads(stale_cached)
-    
-    weather_data = None
-    
-    if provider == "amap" and city:
-        weather_data = await call_amap_weather(city, api_key)
-    elif provider == "baidu" and lat and lon:
-        weather_data = await call_baidu_weather(lat, lon, api_key)
-    elif provider == "openweather" and lat and lon:
-        weather_data = await call_openweather_api(lat, lon, api_key)
-    
+            return WeatherResponse(**json.loads(cached))
+
+    weather_data = await call_amap_weather(SHENZHEN_CITY_CODE, api_key, weather_api_base_url)
+
     if not weather_data:
-        if stale_cached:
-            return WeatherResponse(**stale_data)
+        if redis:
+            latest_cached = await redis.get(latest_cache_key)
+            if latest_cached:
+                return WeatherResponse(**json.loads(latest_cached))
         raise BusinessException(500, "天气 API 调用失败")
-    
+
     weather_response = WeatherResponse(**weather_data)
-    
+
     if redis:
         weather_json = json.dumps(weather_response.model_dump(), default=str)
-        await redis.setex(cache_key, 1800, weather_json)
-        await redis.setex(stale_cache_key, 7200, weather_json)
-    
+        # 保留 3 天便于容灾；latest 便于兜底快速读取。
+        await redis.setex(today_cache_key, 3 * 24 * 60 * 60, weather_json)
+        await redis.setex(latest_cache_key, 3 * 24 * 60 * 60, weather_json)
+
     return weather_response
 
 
@@ -364,39 +351,4 @@ async def generate_comment_reply(
         suggested_reply=result["content"],
         model_used=result["model"],
         tokens_used=result["tokens"],
-    )
-
-
-async def chat_with_ai(
-    request: AIChatRequest,
-    guest_token: str,
-    redis: Redis,
-) -> AIChatResponse:
-    rate_limit_key = f"ai_chat:{guest_token}"
-    if not await check_ai_rate_limit(rate_limit_key, 30, 3600, redis):
-        raise BusinessException(429, "AI 聊天调用过于频繁，请一小时后再试")
-    
-    messages = [
-        {
-            "role": "system",
-            "content": "你是一个友好的博客聊天助手，负责回答访客的问题。请保持友好、专业的态度。",
-        }
-    ]
-    
-    for msg in request.history[-10:]:
-        messages.append({
-            "role": msg.role,
-            "content": msg.content,
-        })
-    
-    messages.append({
-        "role": "user",
-        "content": request.message,
-    })
-    
-    result = await call_openai_api(messages, redis)
-    
-    return AIChatResponse(
-        reply=result["content"],
-        model_used=result["model"],
     )

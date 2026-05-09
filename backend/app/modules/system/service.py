@@ -12,20 +12,22 @@ class SiteConfigService:
     CONFIG_CACHE_TTL = 300
     
     DEFAULT_CONFIGS = {
-        "SITE_NAME": ("博客系统", "str", "站点名称", True),
-        "SITE_DESCRIPTION": ("一个现代化的博客系统", "str", "站点描述", True),
+        "SITE_NAME": ("我的博客", "str", "站点名称", True),
+        "SITE_DESCRIPTION": ("基于 FastAPI + Vue3 的现代化博客系统", "str", "站点描述", True),
+        "SITE_KEYWORDS": ("博客,技术,分享,Vue,FastAPI", "str", "站点关键词", True),
+        "SITE_AUTHOR": ("博主", "str", "站点作者", True),
         "SITE_LOGO": ("", "str", "站点Logo URL", True),
         "ICP_NUMBER": ("", "str", "ICP备案号", True),
-        "COMMENT_ENABLED": ("true", "bool", "评论功能开关", False),
-        "CHATROOM_ENABLED": ("true", "bool", "聊天室功能开关", False),
-        "AI_ENABLED": ("true", "bool", "AI功能开关", False),
-        "COMMENT_NEED_REVIEW": ("true", "bool", "评论需要审核", False),
+        "COMMENT_ENABLED": ("true", "bool", "评论功能开关", True),
+        "AI_ENABLED": ("true", "bool", "AI功能开关", True),
+        "COMMENT_NEED_REVIEW": ("true", "bool", "评论需要审核", True),
         "COMMENT_RATE_LIMIT": ("5", "int", "评论速率限制（每分钟）", False),
-        "CHAT_RATE_LIMIT": ("3", "int", "聊天速率限制（每10秒）", False),
         "AI_API_KEY": ("", "str", "AI API密钥", False),
         "AI_BASE_URL": ("", "str", "AI API地址", False),
         "AI_MODEL": ("", "str", "AI模型名称", False),
         "WEATHER_API_KEY": ("", "str", "天气API密钥", False),
+        "WEATHER_PROVIDER": ("amap", "str", "天气服务商 (amap/baidu/openweather)", False),
+        "WEATHER_API_BASE_URL": ("", "str", "天气 API 地址（可选，覆盖默认地址）", False),
         "N8N_SECRET": ("", "str", "N8N Webhook密钥", False),
         "ADMIN_EMAIL": ("", "str", "管理员邮箱", False),
         "SMTP_HOST": ("", "str", "SMTP服务器地址", False),
@@ -113,23 +115,65 @@ class SiteConfigService:
         return updated
 
     @staticmethod
-    async def get_public_configs() -> Dict[str, str]:
+    async def get_public_configs() -> Dict[str, object]:
+        """返回前端友好结构（snake_case 键名 + 类型转换）
+
+        前端 SiteConfig 只关心一组固定字段，这里同时返回 raw 原始键值，
+        方便管理端复用。
+        """
         configs = await SiteConfig.filter(is_public=True)
-        return {config.key: config.value for config in configs}
+        raw: Dict[str, str] = {c.key: c.value for c in configs}
+
+        def _bool(key: str, default: bool = True) -> bool:
+            v = raw.get(key)
+            if v is None:
+                return default
+            return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+        def _str(key: str, default: str = "") -> str:
+            v = raw.get(key)
+            return v if v not in (None, "") else default
+
+        return {
+            "site_name": _str("SITE_NAME", "我的博客"),
+            "site_description": _str("SITE_DESCRIPTION", "一个现代化的博客系统"),
+            "site_keywords": _str("SITE_KEYWORDS", "博客,技术,分享"),
+            "site_author": _str("SITE_AUTHOR", "博主"),
+            "site_logo": _str("SITE_LOGO", ""),
+            "icp_number": _str("ICP_NUMBER", ""),
+            "admin_email": _str("ADMIN_EMAIL", ""),
+            "comment_enabled": _bool("COMMENT_ENABLED", True),
+            "comment_audit_enabled": _bool("COMMENT_NEED_REVIEW", True),
+            "ai_enabled": _bool("AI_ENABLED", True),
+        }
 
     @staticmethod
     async def init_default_configs():
-        existing_keys = set([config.key for config in await SiteConfig.all()])
-        
+        existing = {c.key: c for c in await SiteConfig.all()}
+
         for key, (value, value_type, description, is_public) in SiteConfigService.DEFAULT_CONFIGS.items():
-            if key not in existing_keys:
+            if key not in existing:
                 await SiteConfig.create(
                     key=key,
                     value=value,
                     value_type=value_type,
                     description=description,
-                    is_public=is_public
+                    is_public=is_public,
                 )
+            else:
+                cfg = existing[key]
+                changed = False
+                if cfg.is_public != is_public:
+                    cfg.is_public = is_public
+                    changed = True
+                if cfg.value_type != value_type:
+                    cfg.value_type = value_type
+                    changed = True
+                if (cfg.description or "") != description:
+                    cfg.description = description
+                    changed = True
+                if changed:
+                    await cfg.save()
 
 
 class FeatureSwitchService:
@@ -153,10 +197,6 @@ class FeatureSwitchService:
     @staticmethod
     async def is_comment_enabled() -> bool:
         return await FeatureSwitchService._get_bool_config("COMMENT_ENABLED", True)
-
-    @staticmethod
-    async def is_chatroom_enabled() -> bool:
-        return await FeatureSwitchService._get_bool_config("CHATROOM_ENABLED", True)
 
     @staticmethod
     async def is_ai_enabled() -> bool:

@@ -10,11 +10,13 @@
 - **Aerich**: 数据库迁移工具
 - **Redis**: 缓存和会话存储
 - **Celery**: 异步任务队列
-- **WebSocket**: 实时聊天功能
+- **WebSocket**: 管理端等场景的实时推送（如评论通知）
 
 ### 前端
-- **Vue 3**: 渐进式 JavaScript 框架
-- **Vite**: 下一代前端构建工具
+- **Vue 3** + **TypeScript**: 组合式 API 与类型安全
+- **Vite** + **Tailwind CSS 4**: 开发与样式
+- **`src/ui`**: 自研轻量组件 + 工具类布局
+- **Pinia / Vue Router / Axios**: 状态、路由与 HTTP
 
 ### 部署
 - **Docker**: 容器化部署
@@ -33,7 +35,7 @@ my_blog_2026_05/
 │   ├── migrations/            # 数据库迁移文件
 │   ├── tests/                 # 测试文件
 │   └── pyproject.toml         # 依赖管理（uv）
-├── frontend/                   # 前端应用（待生成）
+├── frontend/                   # 前端应用（Vite + Vue3）
 ├── nginx/                      # Nginx 配置
 ├── docker-compose.yml          # 开发环境 Docker 配置
 └── docker-compose.prod.yml     # 生产环境 Docker 配置
@@ -90,6 +92,21 @@ uv run python create_admin.py
 uv run uvicorn app.main:app --reload
 ```
 
+### 前端安装（本地开发）
+
+1. 进入 `frontend` 目录并安装依赖：
+```bash
+cd frontend
+npm install
+```
+
+2. 启动开发服务器（默认通过 Vite 代理访问后端 API）：
+```bash
+npm run dev
+```
+
+浏览器访问：http://localhost:5173（后端需单独启动，或与 Docker 一并启动后按 compose 中的端口访问）
+
 ### 使用 Docker
 
 开发环境：
@@ -107,8 +124,7 @@ docker-compose -f docker-compose.prod.yml up -d
 - **auth**: 用户认证与授权（JWT）
 - **articles**: 文章管理（CRUD、分类、标签）
 - **comments**: 评论系统（嵌套回复）
-- **chatroom**: 实时聊天室（WebSocket）
-- **ai**: AI 功能集成
+- **ai**: AI 功能集成（天气、N8N 文章、评论回复建议等）
 - **system**: 系统配置与日志
 - **statistics**: 数据统计
 
@@ -193,37 +209,22 @@ Authorization: Bearer <access_token>
 
 登出后，access_token 和 refresh_token 都会被加入黑名单失效。
 
-## 已完成功能
+## 已完成功能（概要）
 
-- [x] 项目结构搭建
-- [x] 数据库模型设计（所有模块）
-- [x] 核心功能层（配置、数据库、安全、依赖注入、中间件）
-- [x] 认证模块完整实现
-  - [x] JWT 双令牌机制（access + refresh）
-  - [x] 登录限流保护（每分钟10次，15分钟5次失败锁定）
-  - [x] Token 黑名单机制（Redis）
-  - [x] 密码修改
-  - [x] 登录日志记录
-- [x] 文章模块完整实现
-  - [x] 文章 CRUD（草稿/发布/下架）
-  - [x] 分类管理（CRUD + 删除保护）
-  - [x] 标签管理（CRUD + 删除保护）
-  - [x] 自动生成唯一 Slug
-  - [x] 阅读量统计（Redis 24h去重）
-  - [x] 全文搜索功能
-  - [x] 分页列表（支持多条件过滤）
-  - [x] SEO 优化字段支持
+- [x] 后端：项目结构、核心层、各业务模块（认证、文章、评论、AI、系统配置、统计等）
+- [x] 认证：JWT 双令牌、登录限流与锁定、Token 黑名单、密码修改
+- [x] 文章：CRUD、分类/标签、Slug、阅读量与搜索、分页与 SEO 字段
+- [x] 评论：游客身份、匿名评论、嵌套回复、审核与后台管理；管理端 WebSocket 新评论通知
+- [x] AI：天气查询、N8N 收文章、管理端评论 AI 回复建议（`/api/v1/ai/admin/comment-reply`）
+- [x] 前端：博客前台 + 管理后台（仪表盘、文章、评论、统计、系统配置等）
+- [x] 部分单元测试（`backend/tests/`，可用 `uv run pytest` 运行）
 
 ## 待办事项
 
-- [ ] 完成前端应用初始化（Vite + Vue3）
-- [ ] 实现完整的文章 CRUD API
-- [ ] 实现评论系统 API
-- [ ] 实现聊天室 WebSocket 功能
-- [ ] 实现文件上传功能
-- [ ] 配置 Celery 定时任务
-- [ ] 编写单元测试
-- [ ] 部署配置优化
+- [ ] 文章/媒体资源上传（封面、正文插图等）
+- [ ] Celery 定时任务与生产环境监控（Flower、告警）细化
+- [ ] 扩充 E2E / 集成测试与 CI
+- [ ] 生产部署与安全加固（HTTPS、密钥轮换、备份与恢复演练）
 
 ## 许可证
 

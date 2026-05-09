@@ -9,6 +9,7 @@ from app.modules.auth.schemas import (
     TokenResponse,
     RefreshRequest,
     ChangePasswordRequest,
+    UpdateProfileRequest,
 )
 from app.modules.auth.service import AuthService, RateLimitException
 from app.core.dependencies import get_current_admin, get_client_ip
@@ -134,6 +135,30 @@ async def get_current_user_info(current_admin: AdminUser = Depends(get_current_a
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while fetching user info"
+        )
+
+
+@router.put("/me", response_model=dict)
+async def update_current_user_info(
+    profile_data: UpdateProfileRequest,
+    current_admin: AdminUser = Depends(get_current_admin),
+):
+    try:
+        admin = await AuthService.update_profile(
+            current_admin,
+            profile_data.username,
+            profile_data.email,
+        )
+        return success(AdminUserOut.model_validate(admin), "Profile updated successfully")
+    except BadRequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=e.message
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while updating profile"
         )
 
 

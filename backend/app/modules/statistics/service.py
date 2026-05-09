@@ -1,34 +1,74 @@
 import asyncio
 import shutil
 from datetime import datetime, date, timedelta
-from typing import Optional
-from tortoise.functions import Sum, Count
-from tortoise.expressions import Q
+from tortoise.functions import Sum
 
-from app.modules.articles.models import Article
+from app.modules.articles.models import Article, ArticleView
 from app.modules.comments.models import Comment
 from app.modules.statistics.models import DailyStats, APICallLog
 from app.modules.statistics.schemas import (
     DashboardData, TrendResponse, TrendData,
     APIMonitorResponse, APIMetrics, RecentError,
     CeleryTaskStats, SystemHealthResponse, HealthStatus,
-    TopArticle, RecentCommentActivity
+    TopArticle, RecentCommentActivity, CategoryDistribution
 )
 from app.core.redis_client import get_redis_client
-from app.modules.chatroom.ws_manager import manager as ws_manager
 
 
 class StatisticsService:
+    STARTED_AT = datetime.utcnow()
+
+    @staticmethod
+    async def _count_metric_in_range(start_dt: datetime, end_dt: datetime, metric: str) -> int:
+        if metric == "articles":
+            return await Article.filter(created_at__gte=start_dt, created_at__lt=end_dt).count()
+        if metric == "comments":
+            return await Comment.filter(
+                created_at__gte=start_dt,
+                created_at__lt=end_dt,
+                status=Comment.STATUS_APPROVED,
+            ).count()
+        if metric == "visitors":
+            return await ArticleView.filter(
+                viewed_at__gte=start_dt,
+                viewed_at__lt=end_dt,
+            ).distinct().count()
+        if metric == "views":
+            return await ArticleView.filter(viewed_at__gte=start_dt, viewed_at__lt=end_dt).count()
+        return 0
+
+    @staticmethod
+    def _format_uptime(seconds: int) -> str:
+        seconds = max(0, seconds)
+        days, rem = divmod(seconds, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, sec = divmod(rem, 60)
+        return f"{days}d {hours:02d}:{minutes:02d}:{sec:02d}"
+
+    @staticmethod
+    def _resolve_metric_value(stats: list[DailyStats], metric: str) -> int:
+        if metric == "views":
+            return sum(s.total_views for s in stats)
+        if metric == "comments":
+            return sum(s.new_comments for s in stats)
+        if metric == "articles":
+            return sum(s.new_articles for s in stats)
+        if metric == "visitors":
+            return sum(s.unique_visitors for s in stats)
+        return 0
     
     @staticmethod
     async def get_dashboard_data() -> DashboardData:
-        redis = await get_redis_client()
         cache_key = "statistics:dashboard"
-        
-        cached_data = await redis.get(cache_key)
-        if cached_data:
-            import json
-            return DashboardData(**json.loads(cached_data))
+        redis = None
+        try:
+            redis = await get_redis_client()
+            cached_data = await redis.get(cache_key)
+            if cached_data:
+                import json
+                return DashboardData(**json.loads(cached_data))
+        except Exception:
+            redis = None
         
         today = date.today()
         
@@ -36,15 +76,9 @@ class StatisticsService:
         published_articles = await Article.filter(status=Article.STATUS_PUBLISHED).count()
         draft_articles = await Article.filter(status=Article.STATUS_DRAFT).count()
         
-        total_views_result = await Article.all().annotate(
-            total=Sum("view_count")
-        ).values("total")
-        total_views = total_views_result[0]["total"] if total_views_result and total_views_result[0]["total"] else 0
+        total_views = await ArticleView.all().count()
         
         total_comments = await Comment.all().count()
-        pending_comments = await Comment.filter(status=Comment.STATUS_PENDING).count()
-        
-        online_users = await ws_manager.get_online_count()
         
         daily_stat = await DailyStats.get_or_none(stat_date=today)
         if daily_stat:
@@ -63,96 +97,70 @@ class StatisticsService:
             draft_articles=draft_articles,
             total_views=total_views,
             total_comments=total_comments,
-            pending_comments=pending_comments,
-            online_users=online_users,
             today_views=today_views,
             today_comments=today_comments,
             today_new_articles=today_new_articles
         )
         
-        import json
-        await redis.setex(cache_key, 60, json.dumps(data.model_dump()))
+        if redis:
+            try:
+                import json
+                await redis.setex(cache_key, 60, json.dumps(data.model_dump()))
+            except Exception:
+                pass
         
         return data
     
     @staticmethod
     async def get_trend_data(metric: str, period: str) -> TrendResponse:
+        if period not in {"day", "week", "month"}:
+            period = "day"
+        if metric not in {"views", "comments", "articles", "visitors"}:
+            metric = "views"
+
+        today = date.today()
+        trend_data: list[TrendData] = []
+
         if period == "day":
-            days = 30
-            date_list = [date.today() - timedelta(days=i) for i in range(days-1, -1, -1)]
+            date_list = [today - timedelta(days=i) for i in range(29, -1, -1)]
+
+            for day in date_list:
+                start_dt = datetime.combine(day, datetime.min.time())
+                end_dt = start_dt + timedelta(days=1)
+                value = await StatisticsService._count_metric_in_range(start_dt, end_dt, metric)
+                trend_data.append(TrendData(date=day.isoformat(), value=value))
         elif period == "week":
-            weeks = 12
-            date_list = [date.today() - timedelta(weeks=i) for i in range(weeks-1, -1, -1)]
-        elif period == "month":
-            months = 12
-            date_list = []
-            current_date = date.today()
-            for i in range(months-1, -1, -1):
-                month_date = date(current_date.year, current_date.month, 1) - timedelta(days=i*30)
-                date_list.append(month_date)
-        else:
-            date_list = [date.today() - timedelta(days=i) for i in range(29, -1, -1)]
-        
-        trend_data = []
-        
-        for d in date_list:
-            if period == "day":
-                stat = await DailyStats.get_or_none(stat_date=d)
-                if stat:
-                    if metric == "views":
-                        value = stat.total_views
-                    elif metric == "comments":
-                        value = stat.new_comments
-                    elif metric == "articles":
-                        value = stat.new_articles
-                    elif metric == "visitors":
-                        value = stat.unique_visitors
-                    else:
-                        value = 0
-                else:
-                    value = 0
-                
-                trend_data.append(TrendData(date=d.isoformat(), value=value))
-            elif period == "week":
-                week_start = d - timedelta(days=d.weekday())
-                week_end = week_start + timedelta(days=6)
-                
-                stats = await DailyStats.filter(
-                    stat_date__gte=week_start,
-                    stat_date__lte=week_end
-                ).all()
-                
-                if metric == "views":
-                    value = sum(s.total_views for s in stats)
-                elif metric == "comments":
-                    value = sum(s.new_comments for s in stats)
-                elif metric == "articles":
-                    value = sum(s.new_articles for s in stats)
-                elif metric == "visitors":
-                    value = sum(s.unique_visitors for s in stats)
-                else:
-                    value = 0
-                
+            current_week_start = today - timedelta(days=today.weekday())
+            week_starts = [
+                current_week_start - timedelta(weeks=i) for i in range(11, -1, -1)
+            ]
+
+            for week_start in week_starts:
+                start_dt = datetime.combine(week_start, datetime.min.time())
+                end_dt = start_dt + timedelta(days=7)
+                value = await StatisticsService._count_metric_in_range(start_dt, end_dt, metric)
                 trend_data.append(TrendData(date=week_start.isoformat(), value=value))
-            elif period == "month":
-                month_stats = await DailyStats.filter(
-                    stat_date__year=d.year,
-                    stat_date__month=d.month
-                ).all()
-                
-                if metric == "views":
-                    value = sum(s.total_views for s in month_stats)
-                elif metric == "comments":
-                    value = sum(s.new_comments for s in month_stats)
-                elif metric == "articles":
-                    value = sum(s.new_articles for s in month_stats)
-                elif metric == "visitors":
-                    value = sum(s.unique_visitors for s in month_stats)
-                else:
-                    value = 0
-                
-                trend_data.append(TrendData(date=f"{d.year}-{d.month:02d}", value=value))
-        
+        else:
+            month_starts: list[date] = []
+            cursor = date(today.year, today.month, 1)
+            for _ in range(12):
+                month_starts.append(cursor)
+                cursor = date(cursor.year - 1, 12, 1) if cursor.month == 1 else date(cursor.year, cursor.month - 1, 1)
+            month_starts.reverse()
+
+            for month_start in month_starts:
+                month_end = (
+                    date(month_start.year + 1, 1, 1)
+                    if month_start.month == 12
+                    else date(month_start.year, month_start.month + 1, 1)
+                )
+                start_dt = datetime.combine(month_start, datetime.min.time())
+                end_dt = datetime.combine(month_end, datetime.min.time())
+                value = await StatisticsService._count_metric_in_range(start_dt, end_dt, metric)
+                trend_data.append(
+                    TrendData(date=f"{month_start.year}-{month_start.month:02d}", value=value)
+                )
+
         return TrendResponse(
             period=period,
             metric=metric,
@@ -411,10 +419,14 @@ class StatisticsService:
         else:
             overall_status = "healthy"
         
+        uptime_seconds = int((datetime.utcnow() - StatisticsService.STARTED_AT).total_seconds())
+        uptime = StatisticsService._format_uptime(uptime_seconds)
+
         return SystemHealthResponse(
             overall_status=overall_status,
             services=services,
-            checked_at=datetime.utcnow()
+            checked_at=datetime.utcnow(),
+            uptime=uptime,
         )
     
     @staticmethod
@@ -477,27 +489,51 @@ class StatisticsService:
     
     @staticmethod
     async def get_recent_comment_activity(limit: int = 10) -> list[RecentCommentActivity]:
-        from tortoise.functions import Max
-        
         comments = await Comment.filter(
-            status__in=[Comment.STATUS_PENDING, Comment.STATUS_APPROVED]
-        ).group_by("article_id").annotate(
-            comment_count=Count("id"),
-            latest_comment_at=Max("created_at")
-        ).order_by("-latest_comment_at").limit(limit).all()
-        
+            status=Comment.STATUS_APPROVED
+        ).order_by("-created_at").limit(limit).prefetch_related("article", "guest")
+        from app.modules.comments.service import resolve_guest_display_name
+
         activities = []
         for comment in comments:
             article = await comment.article
-            if article:
-                article_comments = await Comment.filter(article_id=article.id).count()
-                latest = await Comment.filter(article_id=article.id).order_by("-created_at").first()
-                
-                activities.append(RecentCommentActivity(
-                    article_id=article.id,
-                    article_title=article.title,
-                    comment_count=article_comments,
-                    latest_comment_at=latest.created_at if latest else datetime.utcnow()
-                ))
-        
+            guest = await comment.guest
+            if not article:
+                continue
+
+            article_comments = await Comment.filter(
+                article_id=article.id, status=Comment.STATUS_APPROVED
+            ).count()
+            guest_name = await resolve_guest_display_name(guest) if guest else "游客"
+
+            activities.append(RecentCommentActivity(
+                id=comment.id,
+                article_id=article.id,
+                article_title=article.title,
+                guest_name=guest_name,
+                content=comment.content,
+                created_at=comment.created_at,
+                comment_count=article_comments,
+                latest_comment_at=comment.created_at,
+            ))
+
         return activities
+
+    @staticmethod
+    async def get_category_distribution() -> list[CategoryDistribution]:
+        from app.modules.articles.models import Category
+
+        categories = await Category.all().order_by("sort_order", "name")
+        result: list[CategoryDistribution] = []
+        for category in categories:
+            article_count = await Article.filter(
+                category_id=category.id,
+                status=Article.STATUS_PUBLISHED
+            ).count()
+            result.append(
+                CategoryDistribution(
+                    category_name=category.name,
+                    article_count=article_count,
+                )
+            )
+        return result

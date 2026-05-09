@@ -15,8 +15,6 @@
 
 ### 2. 功能开关
 
-- 评论功能开关（COMMENT_ENABLED）
-- 聊天室功能开关（CHATROOM_ENABLED）
 - AI功能开关（AI_ENABLED）
 - 自动缓存到 Redis
 
@@ -397,8 +395,6 @@ await SiteConfigService.init_default_configs()
 
 ```python
 # 检查功能开关（带缓存）
-enabled = await FeatureSwitchService.is_comment_enabled()
-enabled = await FeatureSwitchService.is_chatroom_enabled()
 enabled = await FeatureSwitchService.is_ai_enabled()
 ```
 
@@ -484,16 +480,16 @@ result = await ScheduledTaskService.trigger_task_manually("clean_old_logs")
 
 | 配置键 | 默认值 | 类型 | 说明 | 公开 |
 |--------|--------|------|------|------|
-| SITE_NAME | 博客系统 | str | 站点名称 | ✓ |
-| SITE_DESCRIPTION | 一个现代化的博客系统 | str | 站点描述 | ✓ |
+| SITE_NAME | 我的博客 | str | 站点名称 | ✓ |
+| SITE_DESCRIPTION | 基于 FastAPI + Vue3 的现代化博客系统 | str | 站点描述 | ✓ |
+| SITE_KEYWORDS | 博客,技术,分享,Vue,FastAPI | str | 站点关键词 | ✓ |
+| SITE_AUTHOR | 博主 | str | 站点作者 | ✓ |
 | SITE_LOGO | 空 | str | 站点Logo URL | ✓ |
 | ICP_NUMBER | 空 | str | ICP备案号 | ✓ |
-| COMMENT_ENABLED | true | bool | 评论功能开关 | ✗ |
-| CHATROOM_ENABLED | true | bool | 聊天室功能开关 | ✗ |
-| AI_ENABLED | true | bool | AI功能开关 | ✗ |
-| COMMENT_NEED_REVIEW | true | bool | 评论需要审核 | ✗ |
+| COMMENT_ENABLED | true | bool | 评论功能开关 | ✓ |
+| AI_ENABLED | true | bool | AI功能开关 | ✓ |
+| COMMENT_NEED_REVIEW | true | bool | 评论需要审核 | ✓ |
 | COMMENT_RATE_LIMIT | 5 | int | 评论速率限制（每分钟） | ✗ |
-| CHAT_RATE_LIMIT | 3 | int | 聊天速率限制（每10秒） | ✗ |
 | AI_API_KEY | 空 | str | AI API密钥 | ✗ |
 | AI_BASE_URL | 空 | str | AI API地址 | ✗ |
 | AI_MODEL | 空 | str | AI模型名称 | ✗ |

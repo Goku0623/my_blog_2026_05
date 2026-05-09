@@ -1,9 +1,16 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 from tortoise.expressions import F
 from tortoise.queryset import Q
 
-from app.modules.articles.models import Article, Category, Tag, ArticleTag, ArticleView
+from app.modules.articles.models import (
+    Article,
+    Category,
+    Tag,
+    ArticleTag,
+    ArticleView,
+    ArticleDraftLink,
+)
 from app.modules.articles.schemas import (
     CategoryCreate, CategoryUpdate,
     TagCreate, TagUpdate,
@@ -12,7 +19,6 @@ from app.modules.articles.schemas import (
 )
 from app.common.utils import generate_slug
 from app.common.exceptions import NotFoundException, BadRequestException
-from app.core.redis_client import get_redis_client
 import math
 
 
@@ -121,6 +127,111 @@ class TagService:
 
 class ArticleService:
     @staticmethod
+    async def get_draft_link_by_draft_id(draft_article_id: int) -> Optional[ArticleDraftLink]:
+        return await ArticleDraftLink.get_or_none(draft_article_id=draft_article_id)
+
+    @staticmethod
+    async def get_article_by_id(article_id: int) -> Optional[Article]:
+        return await Article.get_or_none(id=article_id)
+
+    @staticmethod
+    async def _replace_article_tags(article_id: int, tag_ids: list[int]):
+        await ArticleTag.filter(article_id=article_id).delete()
+        for tag_id in tag_ids:
+            tag = await Tag.get_or_none(id=tag_id)
+            if tag:
+                await ArticleTag.create(article_id=article_id, tag_id=tag_id)
+
+    @staticmethod
+    async def create_or_update_draft_copy(source_article_id: int, data: ArticleUpdate) -> Article:
+        source_article = await Article.get_or_none(id=source_article_id)
+        if not source_article:
+            raise NotFoundException("Source article not found")
+
+        link = await ArticleDraftLink.get_or_none(source_article_id=source_article_id).prefetch_related("draft_article")
+        draft_article = await link.draft_article if link else None
+        if draft_article and draft_article.status == "deleted":
+            await ArticleDraftLink.filter(id=link.id).delete()
+            draft_article = None
+            link = None
+
+        tag_ids = (
+            list(data.tag_ids)
+            if data.tag_ids is not None
+            else await ArticleTag.filter(article_id=source_article_id).values_list("tag_id", flat=True)
+        )
+
+        if not draft_article:
+            slug_base = f"{source_article.slug}-draft"
+            unique_slug = slug_base
+            counter = 1
+            while await Article.filter(slug=unique_slug).exists():
+                unique_slug = f"{slug_base}-{counter}"
+                counter += 1
+
+            draft_article = await Article.create(
+                title=data.title if data.title is not None else source_article.title,
+                slug=unique_slug,
+                summary=data.summary if data.summary is not None else source_article.summary,
+                content=data.content if data.content is not None else source_article.content,
+                rendered_content=source_article.rendered_content,
+                status=Article.STATUS_DRAFT,
+                category_id=data.category_id if data.category_id is not None else source_article.category_id,
+                cover_image=data.cover_image if data.cover_image is not None else source_article.cover_image,
+                view_count=0,
+                is_featured=source_article.is_featured,
+                allow_comment=data.allow_comment if data.allow_comment is not None else source_article.allow_comment,
+                seo_title=data.seo_title if data.seo_title is not None else source_article.seo_title,
+                seo_description=data.seo_description if data.seo_description is not None else source_article.seo_description,
+                seo_keywords=data.seo_keywords if data.seo_keywords is not None else source_article.seo_keywords,
+            )
+            await ArticleDraftLink.create(source_article_id=source_article_id, draft_article_id=draft_article.id)
+        else:
+            update_data = data.model_dump(exclude_unset=True, exclude={"tag_ids"})
+            for key, value in update_data.items():
+                setattr(draft_article, key, value)
+            draft_article.status = Article.STATUS_DRAFT
+            await draft_article.save()
+
+        await ArticleService._replace_article_tags(draft_article.id, list(tag_ids))
+        return await Article.get(id=draft_article.id).prefetch_related("category", "article_tags__tag")
+
+    @staticmethod
+    async def publish_from_draft_copy(draft_article_id: int) -> Article:
+        link = await ArticleDraftLink.get_or_none(draft_article_id=draft_article_id)
+        if not link:
+            raise NotFoundException("Draft link not found")
+
+        draft_article = await Article.get_or_none(id=draft_article_id)
+        source_article = await Article.get_or_none(id=link.source_article_id)
+        if not draft_article or not source_article:
+            raise NotFoundException("Draft or source article not found")
+
+        source_article.title = draft_article.title
+        source_article.summary = draft_article.summary
+        source_article.content = draft_article.content
+        source_article.rendered_content = draft_article.rendered_content
+        source_article.category_id = draft_article.category_id
+        source_article.cover_image = draft_article.cover_image
+        source_article.allow_comment = draft_article.allow_comment
+        source_article.seo_title = draft_article.seo_title
+        source_article.seo_description = draft_article.seo_description
+        source_article.seo_keywords = draft_article.seo_keywords
+        source_article.status = Article.STATUS_PUBLISHED
+        if not source_article.published_at:
+            source_article.published_at = datetime.now()
+        await source_article.save()
+
+        draft_tag_ids = await ArticleTag.filter(article_id=draft_article.id).values_list("tag_id", flat=True)
+        await ArticleService._replace_article_tags(source_article.id, list(draft_tag_ids))
+
+        await ArticleTag.filter(article_id=draft_article.id).delete()
+        await ArticleDraftLink.filter(id=link.id).delete()
+        await draft_article.delete()
+
+        return await Article.get(id=source_article.id).prefetch_related("category", "article_tags__tag")
+
+    @staticmethod
     async def create_article(data: ArticleCreate, admin_id: int) -> Article:
         slug = generate_slug(data.title)
         
@@ -195,14 +306,34 @@ class ArticleService:
         article = await Article.get_or_none(id=article_id)
         if not article:
             raise NotFoundException("Article not found")
-        
-        if hard_delete:
+
+        # 如果删除的是草稿副本，直接删除草稿及链接。
+        draft_link = await ArticleDraftLink.get_or_none(draft_article_id=article_id)
+        if draft_link:
             await ArticleTag.filter(article_id=article_id).delete()
             await ArticleView.filter(article_id=article_id).delete()
+            await ArticleDraftLink.filter(id=draft_link.id).delete()
             await article.delete()
-        else:
+            return
+
+        if not hard_delete:
             article.status = "deleted"
             await article.save()
+            return
+
+        # 删除源文章时，同步清理其草稿副本与链接，避免孤儿数据。
+        source_links = await ArticleDraftLink.filter(source_article_id=article_id).all()
+        for link in source_links:
+            draft_article = await Article.get_or_none(id=link.draft_article_id)
+            if draft_article:
+                await ArticleTag.filter(article_id=draft_article.id).delete()
+                await ArticleView.filter(article_id=draft_article.id).delete()
+                await draft_article.delete()
+        await ArticleDraftLink.filter(source_article_id=article_id).delete()
+
+        await ArticleTag.filter(article_id=article_id).delete()
+        await ArticleView.filter(article_id=article_id).delete()
+        await article.delete()
 
     @staticmethod
     async def list_articles(
@@ -264,14 +395,6 @@ class ArticleService:
 
     @staticmethod
     async def increment_view_count(article_id: int, ip_address: str, user_agent: Optional[str] = None) -> bool:
-        redis = await get_redis_client()
-        cache_key = f"view:{article_id}:{ip_address}"
-        
-        if await redis.get(cache_key):
-            return False
-        
-        await redis.setex(cache_key, 86400, "1")
-        
         await Article.filter(id=article_id).update(view_count=F("view_count") + 1)
         
         await ArticleView.create(
@@ -283,14 +406,36 @@ class ArticleService:
         return True
 
     @staticmethod
-    async def search_articles(keyword: str, page: int = 1, page_size: int = 10) -> Dict:
+    async def search_articles(
+        keyword: str,
+        page: int = 1,
+        page_size: int = 10,
+        search_in: str = "title_summary",
+        time_filter: str = "all",
+    ) -> Dict:
         query = Article.filter(status=Article.STATUS_PUBLISHED)
-        
-        query = query.filter(
-            Q(title__icontains=keyword) | 
-            Q(content__icontains=keyword) | 
-            Q(summary__icontains=keyword)
-        )
+
+        keyword_query: Optional[Q] = None
+        if search_in in {"title", "title_summary"}:
+            keyword_query = Q(title__icontains=keyword) if keyword_query is None else keyword_query | Q(title__icontains=keyword)
+        if search_in in {"summary", "title_summary"}:
+            keyword_query = Q(summary__icontains=keyword) if keyword_query is None else keyword_query | Q(summary__icontains=keyword)
+
+        # 兼容未知值，默认按标题+摘要搜索。
+        if keyword_query is None:
+            keyword_query = Q(title__icontains=keyword) | Q(summary__icontains=keyword)
+
+        query = query.filter(keyword_query)
+
+        now = datetime.now()
+        if time_filter in {"7d", "30d", "90d", "365d"}:
+            days = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}[time_filter]
+            cutoff = now - timedelta(days=days)
+            # 兼容历史数据：published_at 为空时回退 created_at 判断。
+            query = query.filter(
+                Q(published_at__gte=cutoff) |
+                (Q(published_at__isnull=True) & Q(created_at__gte=cutoff))
+            )
         
         total = await query.count()
         

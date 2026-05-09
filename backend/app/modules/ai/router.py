@@ -3,17 +3,13 @@ from redis.asyncio import Redis
 
 from app.common.response import success
 from app.common.exceptions import UnauthorizedException
-from app.core.dependencies import get_current_admin, get_guest_identity, get_redis, get_client_ip
+from app.core.dependencies import get_current_admin, get_redis, get_client_ip
 from app.modules.auth.models import AdminUser
-from app.modules.comments.models import GuestIdentity
 from app.modules.ai.schemas import (
     N8NArticlePayload,
-    N8NArticleResponse,
     WeatherResponse,
     AICommentReplyRequest,
     AICommentReplyResponse,
-    AIChatRequest,
-    AIChatResponse,
 )
 from app.modules.ai import service
 
@@ -72,21 +68,6 @@ async def generate_comment_reply(
     response = await service.generate_comment_reply(
         request=request,
         admin_username=admin.username,
-        redis=redis,
-    )
-    
-    return success(response.model_dump())
-
-
-@router.post("/chat", response_model=dict)
-async def chat_with_ai(
-    request: AIChatRequest,
-    guest: GuestIdentity = Depends(get_guest_identity),
-    redis: Redis = Depends(get_redis),
-):
-    response = await service.chat_with_ai(
-        request=request,
-        guest_token=guest.guest_token,
         redis=redis,
     )
     

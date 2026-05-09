@@ -9,8 +9,6 @@ class DashboardData(BaseModel):
     draft_articles: int
     total_views: int
     total_comments: int
-    pending_comments: int
-    online_users: int
     today_views: int
     today_comments: int
     today_new_articles: int
@@ -73,6 +71,7 @@ class SystemHealthResponse(BaseModel):
     overall_status: str
     services: list[HealthStatus]
     checked_at: datetime
+    uptime: Optional[str] = None
 
 
 class TopArticle(BaseModel):
@@ -83,8 +82,17 @@ class TopArticle(BaseModel):
     published_at: Optional[datetime]
 
 
+class CategoryDistribution(BaseModel):
+    category_name: str
+    article_count: int
+
+
 class RecentCommentActivity(BaseModel):
+    id: Optional[int] = None
     article_id: int
     article_title: str
+    guest_name: Optional[str] = None
+    content: Optional[str] = None
+    created_at: Optional[datetime] = None
     comment_count: int
     latest_comment_at: datetime

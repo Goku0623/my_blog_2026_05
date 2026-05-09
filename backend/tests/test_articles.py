@@ -1,5 +1,6 @@
 import pytest
 from httpx import AsyncClient
+from datetime import datetime, timedelta
 
 from app.modules.articles.models import Article, Category, Tag
 
@@ -122,6 +123,81 @@ async def test_search_articles(client: AsyncClient, auth_headers: dict):
     data = search_resp.json()["data"]
     assert data["total"] == 1
     assert data["items"][0]["title"] == "FastAPI Searchable"
+
+
+@pytest.mark.asyncio
+async def test_search_endpoint_supports_field_and_time_filter(client: AsyncClient, auth_headers: dict):
+    title_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "Vue Search Title Match",
+            "summary": "regular summary",
+            "content": "regular content",
+        },
+        headers=auth_headers,
+    )
+    summary_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "No Match Title",
+            "summary": "contains phrase-only-in-summary",
+            "content": "regular content",
+        },
+        headers=auth_headers,
+    )
+    content_only_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "No Match",
+            "summary": "regular summary",
+            "content": "contains phrase-only-in-summary",
+        },
+        headers=auth_headers,
+    )
+
+    await client.post(f"/api/v1/admin/articles/{title_resp.json()['data']['id']}/publish", headers=auth_headers)
+    await client.post(f"/api/v1/admin/articles/{summary_resp.json()['data']['id']}/publish", headers=auth_headers)
+    await client.post(f"/api/v1/admin/articles/{content_only_resp.json()['data']['id']}/publish", headers=auth_headers)
+
+    # 将 summary 命中项时间调旧，验证时间过滤。
+    await Article.filter(id=summary_resp.json()["data"]["id"]).update(
+        published_at=datetime.now() - timedelta(days=45)
+    )
+
+    title_search = await client.get(
+        "/api/v1/articles/search",
+        params={"keyword": "Vue Search Title", "search_in": "title"},
+    )
+    assert title_search.status_code == 200
+    assert title_search.json()["data"]["total"] == 1
+    assert title_search.json()["data"]["items"][0]["title"] == "Vue Search Title Match"
+
+    summary_search = await client.get(
+        "/api/v1/articles/search",
+        params={"keyword": "phrase-only-in-summary", "search_in": "summary"},
+    )
+    assert summary_search.status_code == 200
+    assert summary_search.json()["data"]["total"] == 1
+    assert summary_search.json()["data"]["items"][0]["title"] == "No Match Title"
+
+    # title_summary 不应匹配仅 content 命中的文章。
+    combined_search = await client.get(
+        "/api/v1/articles/search",
+        params={"keyword": "phrase-only-in-summary", "search_in": "title_summary"},
+    )
+    assert combined_search.status_code == 200
+    assert combined_search.json()["data"]["total"] == 1
+
+    time_filtered = await client.get(
+        "/api/v1/articles/search",
+        params={
+            "keyword": "phrase-only-in-summary",
+            "search_in": "summary",
+            "time_filter": "30d",
+        },
+    )
+    assert time_filtered.status_code == 200
+    assert time_filtered.json()["data"]["total"] == 0
 
 
 @pytest.mark.asyncio

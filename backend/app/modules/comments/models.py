@@ -18,14 +18,12 @@ class GuestIdentity(Model):
 
 
 class Comment(Model):
-    STATUS_PENDING = "pending"
     STATUS_APPROVED = "approved"
     STATUS_HIDDEN = "hidden"
     STATUS_DELETED = "deleted"
     
     STATUS_CHOICES = [
-        (STATUS_PENDING, "待审核"),
-        (STATUS_APPROVED, "已通过"),
+        (STATUS_APPROVED, "已发布"),
         (STATUS_HIDDEN, "已隐藏"),
         (STATUS_DELETED, "已删除"),
     ]
@@ -37,7 +35,7 @@ class Comment(Model):
     reply_to_nickname = fields.CharField(max_length=50, null=True)
     content = fields.TextField()
     rendered_content = fields.TextField(null=True)
-    status = fields.CharField(max_length=20, default=STATUS_PENDING)
+    status = fields.CharField(max_length=20, default=STATUS_APPROVED)
     is_pinned = fields.BooleanField(default=False)
     admin_reply = fields.TextField(null=True)
     ip_address = fields.CharField(max_length=50)

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Response
 from redis.asyncio import Redis
 
 from app.common.response import success
-from app.core.dependencies import get_current_admin, get_guest_identity, get_redis, get_client_ip
+from app.core.dependencies import get_current_admin, get_current_admin_optional, get_guest_identity, get_redis, get_client_ip
 from app.modules.comments.models import GuestIdentity
 from app.modules.comments.schemas import (
     CommentCreate,
@@ -51,8 +51,9 @@ async def create_comment(
     data: CommentCreate,
     guest: GuestIdentity = Depends(get_guest_identity),
     redis: Redis = Depends(get_redis),
+    admin: Optional[AdminUser] = Depends(get_current_admin_optional),
 ):
-    comment = await service.create_comment(data, guest, redis)
+    comment = await service.create_comment(data, guest, redis, admin=admin)
     comment_out = await service.convert_comment_to_out(comment)
     
     await notify_new_comment(comment.id)
@@ -76,7 +77,7 @@ async def get_guest_identity_endpoint(
     guest_out = GuestIdentityOut(
         id=guest.id,
         guest_token=guest.guest_token,
-        nickname=guest.nickname,
+        nickname=service.build_guest_display_name(guest),
         created_at=guest.created_at,
     )
     
@@ -93,7 +94,7 @@ async def set_guest_nickname(
     guest_out = GuestIdentityOut(
         id=updated_guest.id,
         guest_token=updated_guest.guest_token,
-        nickname=updated_guest.nickname,
+        nickname=service.build_guest_display_name(updated_guest),
         created_at=updated_guest.created_at,
     )
     
@@ -142,7 +143,10 @@ async def admin_action_on_comment(
         admin=admin,
         reason=data.reason,
     )
-    
+
+    if data.action == "delete":
+        return success({"comment_id": comment_id, "deleted": True})
+
     comment_out = await service.convert_comment_to_out(comment)
     return success(comment_out.model_dump())
 

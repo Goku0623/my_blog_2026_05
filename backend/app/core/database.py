@@ -12,7 +12,6 @@ TORTOISE_ORM = {
                 "app.modules.auth.models",
                 "app.modules.articles.models",
                 "app.modules.comments.models",
-                "app.modules.chatroom.models",
                 "app.modules.system.models",
                 "app.modules.statistics.models",
                 "aerich.models",

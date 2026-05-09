@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from app.modules.statistics.service import StatisticsService
 from app.modules.statistics.schemas import (
     DashboardData, TrendResponse, APIMonitorResponse,
-    CeleryTaskStats, SystemHealthResponse, TopArticle, RecentCommentActivity
+    CeleryTaskStats, SystemHealthResponse, TopArticle, RecentCommentActivity, CategoryDistribution
 )
 from app.core.dependencies import get_current_admin
 from app.modules.auth.models import AdminUser
@@ -72,3 +72,11 @@ async def get_recent_comments(
 ):
     data = await StatisticsService.get_recent_comment_activity(limit)
     return success([activity.model_dump() for activity in data])
+
+
+@router.get("/categories/distribution", response_model=dict)
+async def get_category_distribution(
+    current_admin: AdminUser = Depends(get_current_admin)
+):
+    data = await StatisticsService.get_category_distribution()
+    return success([item.model_dump() for item in data])

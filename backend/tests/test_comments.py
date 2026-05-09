@@ -2,6 +2,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.modules.comments.models import Comment
+from app.modules.system.models import SensitiveWord
 
 
 @pytest.mark.asyncio
@@ -71,17 +72,17 @@ async def test_admin_comment_action_and_reply(
         guest=guest,
         content="need admin action",
         rendered_content="<p>need admin action</p>",
-        status=Comment.STATUS_PENDING,
+        status=Comment.STATUS_APPROVED,
         ip_address="127.0.0.1",
     )
 
     action_resp = await client.post(
         f"/api/v1/admin/comments/{comment.id}/action",
-        json={"action": "approve"},
+        json={"action": "hide"},
         headers=auth_headers,
     )
     assert action_resp.status_code == 200
-    assert action_resp.json()["data"]["status"] == "approved"
+    assert action_resp.json()["data"]["status"] == Comment.STATUS_HIDDEN
 
     reply_resp = await client.post(
         f"/api/v1/admin/comments/{comment.id}/reply",
@@ -90,3 +91,57 @@ async def test_admin_comment_action_and_reply(
     )
     assert reply_resp.status_code == 200
     assert reply_resp.json()["data"]["admin_reply"] == "handled by admin"
+
+
+@pytest.mark.asyncio
+async def test_sensitive_words_should_block_comment(
+    client: AsyncClient, create_article, create_guest
+):
+    article = await create_article(
+        title="Sensitive Word Target",
+        slug="sensitive-word-target",
+        content="content",
+        status="published",
+        allow_comment=True,
+    )
+    guest = await create_guest(
+        guest_token="guest_for_sensitive_word",
+        nickname="sensitive_user",
+        ip_address="127.0.0.1",
+        user_agent="pytest",
+    )
+    await SensitiveWord.create(word="违禁词", category="test", is_active=True)
+
+    client.cookies.set("guest_token", guest.guest_token)
+    resp = await client.post(
+        "/api/v1/comments",
+        json={"article_id": article.id, "content": "这条评论包含违禁词"},
+    )
+    assert resp.status_code == 400
+    assert "内容包含敏感词" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_comment_should_always_be_approved(
+    client: AsyncClient, create_article, create_guest
+):
+    article = await create_article(
+        title="Need Review Target",
+        slug="need-review-target",
+        content="content",
+        status="published",
+        allow_comment=True,
+    )
+    guest = await create_guest(
+        guest_token="guest_need_review",
+        nickname="review_user",
+        ip_address="127.0.0.1",
+        user_agent="pytest",
+    )
+    client.cookies.set("guest_token", guest.guest_token)
+    resp = await client.post(
+        "/api/v1/comments",
+        json={"article_id": article.id, "content": "立即发布的评论"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] == Comment.STATUS_APPROVED

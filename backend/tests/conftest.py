@@ -13,7 +13,6 @@ from app.modules.comments.models import GuestIdentity
 from app.modules.auth.router import router as auth_router
 from app.modules.articles.router import router as articles_router
 from app.modules.comments.router import router as comments_router
-from app.modules.chatroom.router import router as chatroom_router
 from app.modules.ai.router import router as ai_router
 from app.modules.system.router import router as system_router
 from app.modules.statistics.router import router as statistics_router
@@ -23,7 +22,6 @@ MODEL_MODULES = [
     "app.modules.auth.models",
     "app.modules.articles.models",
     "app.modules.comments.models",
-    "app.modules.chatroom.models",
     "app.modules.system.models",
     "app.modules.statistics.models",
 ]
@@ -95,7 +93,6 @@ async def db_setup(monkeypatch, fake_redis):
     monkeypatch.setattr("app.modules.articles.service.get_redis_client", _get_redis)
     monkeypatch.setattr("app.core.dependencies.get_redis_client", _get_redis)
     monkeypatch.setattr("app.modules.system.service.get_redis_client", _get_redis)
-    monkeypatch.setattr("app.modules.chatroom.ws_manager.get_redis_client", _get_redis)
     monkeypatch.setattr(
         "app.modules.auth.service.verify_password",
         lambda plain, hashed: plain == hashed,
@@ -116,7 +113,6 @@ async def client(db_setup):
     test_app.include_router(auth_router, prefix="/api/v1")
     test_app.include_router(articles_router, prefix="/api/v1")
     test_app.include_router(comments_router, prefix="/api/v1")
-    test_app.include_router(chatroom_router, prefix="/api/v1")
     test_app.include_router(ai_router, prefix="/api/v1")
     test_app.include_router(system_router, prefix="/api/v1")
     test_app.include_router(statistics_router, prefix="/api/v1")

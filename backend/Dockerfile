@@ -24,8 +24,8 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY uv.lock* ./
 
-# Install Python dependencies using uv
-RUN uv pip install --system -r pyproject.toml
+# Install Python dependencies using pyproject
+RUN uv pip install --system .
 
 
 # ============================================
@@ -66,5 +66,5 @@ COPY --chown=appuser:appuser . .
 # Expose port
 EXPOSE 8000
 
-# Production command with multiple workers
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Production command
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "on"]

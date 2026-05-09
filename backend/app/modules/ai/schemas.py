@@ -47,18 +47,3 @@ class AICommentReplyResponse(BaseModel):
     suggested_reply: str
     model_used: str
     tokens_used: int
-
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-
-class AIChatRequest(BaseModel):
-    message: str
-    history: List[ChatMessage] = Field(default_factory=list, max_length=10)
-
-
-class AIChatResponse(BaseModel):
-    reply: str
-    model_used: str

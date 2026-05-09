@@ -1,6 +1,8 @@
 import os
+import logging
 from app.modules.system.models import SiteConfig
 
+logger = logging.getLogger(__name__)
 
 async def init_ai_configs():
     """
@@ -30,6 +32,13 @@ async def init_ai_configs():
             "is_public": False,
         },
         {
+            "key": "WEATHER_API_BASE_URL",
+            "value": os.getenv("WEATHER_API_BASE_URL", ""),
+            "value_type": SiteConfig.TYPE_STR,
+            "description": "天气 API 地址（可选，覆盖默认地址）",
+            "is_public": False,
+        },
+        {
             "key": "AI_API_KEY",
             "value": os.getenv("AI_API_KEY", ""),
             "value_type": SiteConfig.TYPE_STR,
@@ -56,6 +65,6 @@ async def init_ai_configs():
         existing = await SiteConfig.get_or_none(key=config_data["key"])
         if not existing:
             await SiteConfig.create(**config_data)
-            print(f"✓ 初始化配置: {config_data['key']}")
+            logger.info("Initialized AI config: %s", config_data["key"])
         else:
-            print(f"- 配置已存在: {config_data['key']}")
+            logger.info("AI config already exists: %s", config_data["key"])

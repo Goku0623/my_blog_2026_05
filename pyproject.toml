@@ -1,9 +1,0 @@
-[project]
-name = "my-blog-2026-05"
-version = "0.1.0"
-description = "FastAPI + Vue3 构建个人网站"
-readme = "README.md"
-requires-python = ">=3.13"
-
-[tool.uv.workspace]
-members = ["backend"]

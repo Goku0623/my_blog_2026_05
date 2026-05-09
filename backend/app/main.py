@@ -10,7 +10,6 @@ from app.common.exceptions import setup_exception_handlers
 from app.modules.auth.router import router as auth_router
 from app.modules.articles.router import router as articles_router
 from app.modules.comments.router import router as comments_router
-from app.modules.chatroom.router import router as chatroom_router
 from app.modules.ai.router import router as ai_router
 from app.modules.system.router import router as system_router
 from app.modules.statistics.router import router as statistics_router
@@ -47,7 +46,6 @@ setup_exception_handlers(app)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(articles_router, prefix="/api/v1")
 app.include_router(comments_router, prefix="/api/v1")
-app.include_router(chatroom_router, prefix="/api/v1")
 app.include_router(ai_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")
 app.include_router(statistics_router, prefix="/api/v1")
