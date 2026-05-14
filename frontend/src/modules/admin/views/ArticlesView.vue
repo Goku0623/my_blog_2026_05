@@ -107,7 +107,7 @@
           v-model:current="queryParams.page"
           :page-size="queryParams.page_size"
           :total="total"
-          @change="fetchArticles"
+          @change="handlePageChange"
         />
       </div>
     </UCard>
@@ -124,6 +124,24 @@ import { UCard, UInput, USelect, UButton, UTag, UEmpty, USpinner, UPagination, t
 const loading = ref(false)
 const articles = ref<any[]>([])
 const total = ref(0)
+let fetchSerial = 0
+const prefetchedPageCache = new Map<string, { items: any[]; total: number; timestamp: number }>()
+const PREFETCH_TTL_MS = 60 * 1000
+
+const ARTICLE_LIST_CACHE_KEY = 'admin_articles_cache_v1'
+const ARTICLE_LIST_CACHE_TTL_MS = 90 * 1000
+
+interface ArticleListCachePayload {
+  timestamp: number
+  query: {
+    page: number
+    page_size: number
+    keyword: string
+    status_filter: string
+  }
+  items: any[]
+  total: number
+}
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -138,27 +156,133 @@ const queryParams = reactive({
   status_filter: '',
 })
 
-const fetchArticles = async () => {
+const buildQueryKey = (page: number) => {
+  return JSON.stringify({
+    page,
+    page_size: queryParams.page_size,
+    keyword: queryParams.keyword.trim(),
+    status_filter: queryParams.status_filter,
+  })
+}
+
+const readPrefetchedPage = (page: number) => {
+  const key = buildQueryKey(page)
+  const cached = prefetchedPageCache.get(key)
+  if (!cached) return null
+  if (Date.now() - cached.timestamp > PREFETCH_TTL_MS) {
+    prefetchedPageCache.delete(key)
+    return null
+  }
+  return cached
+}
+
+const writePrefetchedPage = (page: number, items: any[], pageTotal: number) => {
+  const key = buildQueryKey(page)
+  prefetchedPageCache.set(key, {
+    items,
+    total: pageTotal,
+    timestamp: Date.now(),
+  })
+}
+
+const readArticleListCache = (): ArticleListCachePayload | null => {
   try {
-    loading.value = true
+    const raw = sessionStorage.getItem(ARTICLE_LIST_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as ArticleListCachePayload
+    if (!parsed || typeof parsed.timestamp !== 'number') return null
+    if (Date.now() - parsed.timestamp > ARTICLE_LIST_CACHE_TTL_MS) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const writeArticleListCache = () => {
+  const payload: ArticleListCachePayload = {
+    timestamp: Date.now(),
+    query: {
+      page: queryParams.page,
+      page_size: queryParams.page_size,
+      keyword: queryParams.keyword,
+      status_filter: queryParams.status_filter,
+    },
+    items: articles.value,
+    total: total.value,
+  }
+  try {
+    sessionStorage.setItem(ARTICLE_LIST_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore cache write failure
+  }
+}
+
+const fetchArticles = async (options?: { silent?: boolean }) => {
+  const currentSerial = ++fetchSerial
+  const silent = options?.silent === true
+  try {
+    if (!silent) loading.value = true
     const res = await getAdminArticles(queryParams)
-    articles.value = res.data?.data?.items ?? []
-    total.value = res.data?.data?.total ?? 0
+    if (currentSerial !== fetchSerial) return
+    const pageItems = res.data?.data?.items ?? []
+    const pageTotal = res.data?.data?.total ?? 0
+    articles.value = pageItems
+    total.value = pageTotal
+    writePrefetchedPage(queryParams.page, pageItems, pageTotal)
+    writeArticleListCache()
+    void prefetchNextPage(pageTotal)
   } catch (e) {
     toast.error('获取文章列表失败')
   } finally {
-    loading.value = false
+    if (currentSerial === fetchSerial) {
+      loading.value = false
+    }
+  }
+}
+
+const prefetchNextPage = async (pageTotal: number) => {
+  const totalPages = Math.max(1, Math.ceil(pageTotal / queryParams.page_size))
+  const nextPage = queryParams.page + 1
+  if (nextPage > totalPages) return
+  if (readPrefetchedPage(nextPage)) return
+
+  try {
+    const res = await getAdminArticles({
+      page: nextPage,
+      page_size: queryParams.page_size,
+      keyword: queryParams.keyword,
+      status_filter: queryParams.status_filter,
+    })
+    const nextItems = res.data?.data?.items ?? []
+    const nextTotal = res.data?.data?.total ?? pageTotal
+    writePrefetchedPage(nextPage, nextItems, nextTotal)
+  } catch {
+    // prefetch failure should not affect UI
   }
 }
 
 const handleSearch = () => {
   queryParams.page = 1
+  prefetchedPageCache.clear()
+  fetchArticles()
+}
+
+const handlePageChange = () => {
+  const cached = readPrefetchedPage(queryParams.page)
+  if (cached) {
+    articles.value = cached.items
+    total.value = cached.total
+    writeArticleListCache()
+    fetchArticles({ silent: true })
+    return
+  }
   fetchArticles()
 }
 
 const handleReset = () => {
   queryParams.keyword = ''
   queryParams.status_filter = ''
+  prefetchedPageCache.clear()
   handleSearch()
 }
 
@@ -195,5 +319,18 @@ const handleDelete = async (row: any) => {
   }
 }
 
-onMounted(fetchArticles)
+onMounted(() => {
+  const cache = readArticleListCache()
+  if (!cache) {
+    fetchArticles()
+    return
+  }
+  queryParams.page = cache.query.page
+  queryParams.page_size = cache.query.page_size
+  queryParams.keyword = cache.query.keyword
+  queryParams.status_filter = cache.query.status_filter
+  articles.value = cache.items ?? []
+  total.value = cache.total ?? 0
+  fetchArticles({ silent: true })
+})
 </script>

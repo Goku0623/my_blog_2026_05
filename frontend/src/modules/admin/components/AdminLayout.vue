@@ -131,15 +131,29 @@
       </header>
 
       <main class="flex-1 p-4 sm:p-6">
-        <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
-            <component :is="Component" :key="route.fullPath" />
+        <router-view v-slot="{ Component, route: viewRoute }">
+          <transition name="fade">
+            <keep-alive
+              v-if="viewRoute.meta.keepAlive"
+              :include="keepAliveInclude"
+              :max="3"
+            >
+              <component
+                :is="Component"
+                :key="viewRoute.name as string"
+              />
+            </keep-alive>
+            <component
+              :is="Component"
+              v-else
+              :key="viewRoute.path"
+            />
           </transition>
         </router-view>
       </main>
     </div>
 
-    <UModal v-model="profileVisible" title="个人资料" width="sm">
+    <UModal v-model="profileVisible" title="个人资料" width="sm" :backdrop-blur="false">
       <div class="space-y-4">
         <div class="space-y-1.5">
           <label class="text-sm text-[var(--text-soft)]">用户名</label>
@@ -156,7 +170,7 @@
       </div>
     </UModal>
 
-    <UModal v-model="passwordVisible" title="修改密码" width="sm">
+    <UModal v-model="passwordVisible" title="修改密码" width="sm" :backdrop-blur="false">
       <div class="space-y-4">
         <div class="space-y-1.5">
           <label class="text-sm text-[var(--text-soft)]">当前密码</label>
@@ -206,6 +220,7 @@ const navItems = [
   { path: '/admin/operation-logs', label: '操作日志', icon: History },
   { path: '/admin/system-config', label: '系统配置', icon: Settings },
 ]
+const keepAliveInclude = ['Articles', 'Comments', 'OperationLogs']
 
 const collapsed = ref(localStorage.getItem('admin_sidebar_collapsed') === '1')
 const sidebarOpen = ref(false)

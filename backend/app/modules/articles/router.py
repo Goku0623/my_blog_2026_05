@@ -8,6 +8,7 @@ from app.modules.articles.schemas import (
     PaginatedArticles
 )
 from app.modules.articles.service import CategoryService, TagService, ArticleService
+from app.modules.articles.models import ArticleDraftLink
 from app.core.dependencies import get_current_admin, get_client_ip
 from app.modules.auth.models import AdminUser
 from app.common.response import success
@@ -37,7 +38,7 @@ async def _log_article_operation(
     )
 
 
-async def _serialize_article_list_item(article) -> dict:
+async def _serialize_article_list_item(article, draft_link_map: Optional[dict[int, ArticleDraftLink]] = None) -> dict:
     category = await article.category if article.category_id else None
     tags = []
     article_tags = await article.article_tags.all().prefetch_related("tag")
@@ -45,7 +46,7 @@ async def _serialize_article_list_item(article) -> dict:
         if article_tag.tag:
             tags.append(TagOut.model_validate(article_tag.tag).model_dump())
 
-    draft_link = await ArticleService.get_draft_link_by_draft_id(article.id)
+    draft_link = draft_link_map.get(article.id) if draft_link_map is not None else await ArticleService.get_draft_link_by_draft_id(article.id)
     return {
         "id": article.id,
         "title": article.title,
@@ -54,7 +55,8 @@ async def _serialize_article_list_item(article) -> dict:
         "status": article.status,
         "category": CategoryOut.model_validate(category).model_dump() if category else None,
         "tags": tags,
-        "cover_image": article.cover_image,
+        # 列表只返回缩略图，避免传输完整原图占用大量带宽。
+        "cover_image_thumb": article.cover_image_thumb,
         "view_count": article.view_count,
         "is_featured": article.is_featured,
         "published_at": article.published_at,
@@ -85,9 +87,10 @@ async def list_articles_public(
             is_admin=False
         )
 
+        draft_link_map = await ArticleService.get_draft_links_by_draft_ids([article.id for article in result["items"]])
         serialized_items = []
         for article in result["items"]:
-            serialized_items.append(await _serialize_article_list_item(article))
+            serialized_items.append(await _serialize_article_list_item(article, draft_link_map))
 
         result["items"] = serialized_items
         return success(result)
@@ -114,9 +117,10 @@ async def search_articles(
             search_in=search_in,
             time_filter=time_filter,
         )
+        draft_link_map = await ArticleService.get_draft_links_by_draft_ids([article.id for article in result["items"]])
         serialized_items = []
         for article in result["items"]:
-            serialized_items.append(await _serialize_article_list_item(article))
+            serialized_items.append(await _serialize_article_list_item(article, draft_link_map))
 
         result["items"] = serialized_items
         return success(result)
@@ -177,6 +181,8 @@ async def get_article_by_slug(slug: str, request: Request):
             "category": CategoryOut.model_validate(category) if category else None,
             "tags": [TagOut.model_validate(tag) for tag in tags],
             "cover_image": article.cover_image,
+            "cover_image_thumb": article.cover_image_thumb,
+            "cover_image_large": article.cover_image_large,
             "view_count": article.view_count,
             "is_featured": article.is_featured,
             "allow_comment": article.allow_comment,
@@ -251,9 +257,10 @@ async def list_articles_admin(
             is_admin=True
         )
 
+        draft_link_map = await ArticleService.get_draft_links_by_draft_ids([article.id for article in result["items"]])
         serialized_items = []
         for article in result["items"]:
-            serialized_items.append(await _serialize_article_list_item(article))
+            serialized_items.append(await _serialize_article_list_item(article, draft_link_map))
 
         result["items"] = serialized_items
         return success(result)
@@ -291,6 +298,8 @@ async def create_article(
             "category": CategoryOut.model_validate(category) if category else None,
             "tags": [TagOut.model_validate(tag) for tag in tags],
             "cover_image": article.cover_image,
+            "cover_image_thumb": article.cover_image_thumb,
+            "cover_image_large": article.cover_image_large,
             "view_count": article.view_count,
             "is_featured": article.is_featured,
             "allow_comment": article.allow_comment,
@@ -361,6 +370,8 @@ async def get_article_admin(
             "category": CategoryOut.model_validate(category) if category else None,
             "tags": [TagOut.model_validate(tag) for tag in tags],
             "cover_image": article.cover_image,
+            "cover_image_thumb": article.cover_image_thumb,
+            "cover_image_large": article.cover_image_large,
             "view_count": article.view_count,
             "is_featured": article.is_featured if hasattr(article, "is_featured") else False,
             "allow_comment": article.allow_comment,
@@ -413,6 +424,8 @@ async def update_article(
             "category": CategoryOut.model_validate(category) if category else None,
             "tags": [TagOut.model_validate(tag) for tag in tags],
             "cover_image": article.cover_image,
+            "cover_image_thumb": article.cover_image_thumb,
+            "cover_image_large": article.cover_image_large,
             "view_count": article.view_count,
             "is_featured": article.is_featured,
             "allow_comment": article.allow_comment,
@@ -438,6 +451,11 @@ async def update_article(
     except NotFoundException as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=e.message
+        )
+    except BadRequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=e.message
         )
     except Exception as e:
@@ -554,6 +572,8 @@ async def create_or_update_article_draft(
             "category": CategoryOut.model_validate(category) if category else None,
             "tags": [TagOut.model_validate(tag) for tag in tags],
             "cover_image": draft.cover_image,
+            "cover_image_thumb": draft.cover_image_thumb,
+            "cover_image_large": draft.cover_image_large,
             "view_count": draft.view_count,
             "is_featured": draft.is_featured,
             "allow_comment": draft.allow_comment,
@@ -570,6 +590,11 @@ async def create_or_update_article_draft(
     except NotFoundException as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=e.message
+        )
+    except BadRequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=e.message
         )
     except Exception:

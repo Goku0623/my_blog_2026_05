@@ -111,12 +111,13 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Sun, Moon, Settings, Search, Menu, X, Rocket } from 'lucide-vue-next'
 import { useSiteStore } from '@/stores/site'
 
 const siteStore = useSiteStore()
 const route = useRoute()
+const router = useRouter()
 
 const navItems = [
   { to: '/', label: '首页' },
@@ -143,16 +144,21 @@ const toggleTheme = () => {
 
 const scrolled = ref(false)
 const mobileMenuOpen = ref(false)
+let scrollRafId: number | null = null
 
 const handleScroll = () => {
-  scrolled.value = window.scrollY > 4
+  if (scrollRafId !== null) return
+  scrollRafId = window.requestAnimationFrame(() => {
+    scrollRafId = null
+    scrolled.value = window.scrollY > 4
+  })
 }
 
 const handleKey = (e: KeyboardEvent) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     if (route.path !== '/search') {
-      window.location.href = '/search'
+      router.push('/search')
     }
   }
 }
@@ -170,5 +176,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', handleScroll)
   window.removeEventListener('keydown', handleKey)
+  if (scrollRafId !== null) {
+    window.cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
+  }
 })
 </script>

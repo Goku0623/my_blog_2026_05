@@ -31,7 +31,7 @@
       </div>
 
       <div class="overflow-x-auto rounded-lg border border-[var(--border)]">
-        <table class="w-full text-sm">
+        <table class="w-full text-sm" v-memo="[loading, comments, selectedSignature, total]">
           <thead class="bg-[var(--bg-soft)] text-[var(--text-soft)]">
             <tr>
               <th class="px-3 py-3 w-10 text-center">
@@ -56,6 +56,7 @@
             <tr
               v-for="row in comments"
               :key="row.id"
+              v-memo="[row, selectedIds.includes(row.id)]"
               class="hover:bg-[var(--bg-muted)] transition-colors"
             >
               <td class="px-3 py-3 text-center">
@@ -106,13 +107,13 @@
           v-model:current="queryParams.page"
           :page-size="queryParams.page_size"
           :total="total"
-          @change="fetchComments"
+          @change="handlePageChange"
         />
       </div>
     </UCard>
 
     <!-- 详情侧抽屉（用 Modal 大宽度近似） -->
-    <UModal v-model="drawerVisible" title="评论详情" width="lg">
+    <UModal v-model="drawerVisible" title="评论详情" width="lg" :backdrop-blur="false">
       <div v-if="currentComment" class="space-y-5 text-sm">
         <div class="grid grid-cols-2 gap-3 text-[var(--text-soft)]">
           <div><span class="text-[var(--text-muted)]">ID：</span>{{ currentComment.id }}</div>
@@ -159,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, reactive, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Search, RotateCcw, CheckSquare } from 'lucide-vue-next'
 import { getAdminComments, commentAction, adminReplyComment, type Comment } from '@/api/comments'
 import { formatDateTime } from '@/utils/time'
@@ -174,6 +175,9 @@ const total = ref(0)
 const selectedIds = ref<number[]>([])
 
 const queryParams = reactive({ page: 1, page_size: 20, keyword: '' })
+let searchDebounceTimer: number | null = null
+let commentsAbortController: AbortController | null = null
+let commentsFetchSerial = 0
 
 const drawerVisible = ref(false)
 const currentComment = ref<Comment | null>(null)
@@ -183,28 +187,50 @@ const replying = ref(false)
 const allSelected = computed(() =>
   comments.value.length > 0 && comments.value.every((c) => selectedIds.value.includes(c.id))
 )
+const selectedSignature = computed(() => selectedIds.value.join(','))
 
-const fetchComments = async () => {
+const fetchComments = async (options?: { silent?: boolean }) => {
+  const silent = options?.silent === true
+  const currentSerial = ++commentsFetchSerial
+  commentsAbortController?.abort()
+  commentsAbortController = new AbortController()
   try {
-    loading.value = true
+    if (!silent) loading.value = true
     const res = await getAdminComments({
       page: queryParams.page,
       page_size: queryParams.page_size,
       keyword: queryParams.keyword || undefined,
-    } as any)
+    } as any, commentsAbortController.signal)
+    if (currentSerial !== commentsFetchSerial) return
     comments.value = res.data?.data?.items ?? []
     total.value = res.data?.data?.total ?? 0
     selectedIds.value = []
-  } catch {
+  } catch (error: any) {
+    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return
     toast.error('获取评论列表失败')
   } finally {
-    loading.value = false
+    if (currentSerial === commentsFetchSerial) loading.value = false
   }
 }
 
 const handleSearch = () => {
   queryParams.page = 1
   fetchComments()
+}
+
+const handlePageChange = () => {
+  fetchComments()
+}
+
+const scheduleKeywordSearch = () => {
+  if (searchDebounceTimer !== null) {
+    window.clearTimeout(searchDebounceTimer)
+  }
+  searchDebounceTimer = window.setTimeout(() => {
+    searchDebounceTimer = null
+    queryParams.page = 1
+    fetchComments()
+  }, 240)
 }
 
 const handleReset = () => {
@@ -305,15 +331,16 @@ const handleAdminReply = async () => {
 
 onMounted(fetchComments)
 
-const handleAdminProfileUpdated = () => {
-  fetchComments()
-}
-
-onMounted(() => {
-  window.addEventListener('admin-profile-updated', handleAdminProfileUpdated)
+watch(() => queryParams.keyword, (next, prev) => {
+  if (next === prev) return
+  scheduleKeywordSearch()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('admin-profile-updated', handleAdminProfileUpdated)
+  commentsAbortController?.abort()
+  if (searchDebounceTimer !== null) {
+    window.clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = null
+  }
 })
 </script>

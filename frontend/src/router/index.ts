@@ -69,7 +69,7 @@ const routes: RouteRecordRaw[] = [
         path: 'articles',
         name: 'Articles',
         component: () => import('@/modules/admin/views/ArticlesView.vue'),
-        meta: { title: '文章管理', requiresAuth: true },
+        meta: { title: '文章管理', requiresAuth: true, keepAlive: true },
       },
       {
         path: 'articles/new',
@@ -87,7 +87,7 @@ const routes: RouteRecordRaw[] = [
         path: 'comments',
         name: 'Comments',
         component: () => import('@/modules/admin/views/CommentsView.vue'),
-        meta: { title: '评论管理', requiresAuth: true },
+        meta: { title: '评论管理', requiresAuth: true, keepAlive: true },
       },
       {
         path: 'guestbook',
@@ -111,7 +111,7 @@ const routes: RouteRecordRaw[] = [
         path: 'operation-logs',
         name: 'OperationLogs',
         component: () => import('@/modules/admin/views/OperationLogsView.vue'),
-        meta: { title: '操作日志', requiresAuth: true },
+        meta: { title: '操作日志', requiresAuth: true, keepAlive: true },
       },
       {
         path: 'statistics',
@@ -126,7 +126,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
-    component: () => import('@/modules/blog/views/HomeView.vue'),
+    component: () => import('@/modules/blog/views/NotFoundView.vue'),
     meta: { title: '页面不存在' },
   },
 ]

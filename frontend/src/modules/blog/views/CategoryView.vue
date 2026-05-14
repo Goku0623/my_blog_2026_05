@@ -27,11 +27,11 @@
     </section>
 
     <main class="flex-1 container-page pb-20">
-      <div v-if="loading" class="grid gap-6 sm:grid-cols-2">
-        <USkeleton v-for="i in 4" :key="i" class="h-72 rounded-2xl" />
+      <div v-if="loading" class="article-list-grid">
+        <USkeleton v-for="i in 4" :key="i" class="h-[440px] rounded-2xl" />
       </div>
       <UEmpty v-else-if="!articles.length" title="该分类下暂无文章" class="py-20" />
-      <div v-else class="grid gap-6 sm:grid-cols-2">
+      <div v-else class="article-list-grid">
         <ArticleCard v-for="a in articles" :key="a.id" :article="a" />
       </div>
 
@@ -63,11 +63,46 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 const loading = ref(false)
+const CATEGORY_CACHE_KEY = 'blog_categories_cache_v1'
+const CATEGORY_CACHE_TTL_MS = 10 * 60 * 1000
+
+interface CategoryCachePayload {
+  timestamp: number
+  items: Category[]
+}
+
+const readCategoryCache = (): Category[] | null => {
+  try {
+    const raw = sessionStorage.getItem(CATEGORY_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as CategoryCachePayload
+    if (!parsed || typeof parsed.timestamp !== 'number' || !Array.isArray(parsed.items)) return null
+    if (Date.now() - parsed.timestamp > CATEGORY_CACHE_TTL_MS) return null
+    return parsed.items
+  } catch {
+    return null
+  }
+}
+
+const writeCategoryCache = (items: Category[]) => {
+  try {
+    const payload: CategoryCachePayload = { timestamp: Date.now(), items }
+    sessionStorage.setItem(CATEGORY_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore cache write failure
+  }
+}
 
 const fetchCategory = async () => {
+  const cached = readCategoryCache()
+  if (cached) {
+    category.value = cached.find((c) => c.id === categoryId.value) || null
+    if (category.value) return
+  }
   try {
     const res = await getCategories()
     const list = res.data?.data ?? []
+    writeCategoryCache(list)
     category.value = list.find((c) => c.id === categoryId.value) || null
   } catch {
     /* silent */

@@ -5,13 +5,21 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <span class="font-semibold">数据趋势分析</span>
           <div class="flex flex-wrap gap-2">
-            <SegControl v-model="trendMetric" :items="metricItems" @change="fetchTrendData" />
-            <SegControl v-model="trendPeriod" :items="periodItems" @change="fetchTrendData" />
+            <SegControl v-model="trendMetric" :items="metricItems" @change="scheduleTrendFetch" />
+            <SegControl v-model="trendPeriod" :items="periodItems" @change="scheduleTrendFetch" />
           </div>
         </div>
       </template>
       <div class="h-80">
-        <v-chart class="size-full" :option="trendOption" autoresize />
+        <v-chart
+          v-if="chartsReady"
+          class="size-full"
+          :option="trendOption"
+          :autoresize="{ throttle: 200 }"
+        />
+        <div v-else class="h-full p-4">
+          <USkeleton class="h-full rounded-xl" />
+        </div>
       </div>
     </UCard>
 
@@ -21,7 +29,15 @@
           <span class="font-semibold">接口调用 Top 10（24 小时）</span>
         </template>
         <div class="h-80">
-          <v-chart class="size-full" :option="apiOption" autoresize />
+          <v-chart
+            v-if="chartsReady"
+            class="size-full"
+            :option="apiOption"
+            :autoresize="{ throttle: 200 }"
+          />
+          <div v-else class="h-full p-4">
+            <USkeleton class="h-full rounded-xl" />
+          </div>
         </div>
       </UCard>
 
@@ -30,7 +46,15 @@
           <span class="font-semibold">文章分类分布</span>
         </template>
         <div class="h-80">
-          <v-chart class="size-full" :option="categoryOption" autoresize />
+          <v-chart
+            v-if="chartsReady"
+            class="size-full"
+            :option="categoryOption"
+            :autoresize="{ throttle: 200 }"
+          />
+          <div v-else class="h-full p-4">
+            <USkeleton class="h-full rounded-xl" />
+          </div>
         </div>
       </UCard>
     </div>
@@ -39,14 +63,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { ref, onMounted, onBeforeUnmount, h } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart, BarChart, PieChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { getTrends, getApiMonitor, getCategoryStats } from '@/api/statistics'
-import { UCard, toast } from '@/ui'
+import { UCard, USkeleton, toast } from '@/ui'
 
 use([
   CanvasRenderer, LineChart, BarChart, PieChart,
@@ -98,15 +122,35 @@ const trendPeriod = ref<'day' | 'week' | 'month'>('day')
 const trendOption = ref<any>({})
 const apiOption = ref<any>({})
 const categoryOption = ref<any>({})
+const chartsReady = ref(false)
+let trendDebounceTimer: number | null = null
+let trendRequestSerial = 0
+let otherRequestSerial = 0
+let backgroundRefreshTimer: number | null = null
+
+const STATS_CACHE_KEY = 'admin_statistics_cache_v1'
+const STATS_CACHE_TTL_MS = 2 * 60 * 1000
+
+interface StatisticsCachePayload {
+  timestamp: number
+  trendMetric: 'views' | 'comments' | 'articles' | 'visitors'
+  trendPeriod: 'day' | 'week' | 'month'
+  trendOption: any
+  apiOption: any
+  categoryOption: any
+}
 
 const fetchTrendData = async () => {
+  const currentSerial = ++trendRequestSerial
   try {
     const res = await getTrends(trendMetric.value, trendPeriod.value)
+    if (currentSerial !== trendRequestSerial) return
     const data = res.data?.data?.data ?? []
     const labelMap: Record<string, string> = {
       views: '阅读量', comments: '评论量', articles: '文章数', visitors: '访客数',
     }
     trendOption.value = {
+      animation: false,
       tooltip: { trigger: 'axis' },
       grid: { left: 12, right: 16, top: 24, bottom: 8 },
       xAxis: { type: 'category', boundaryGap: false, data: data.map((i: any) => i.date) },
@@ -128,11 +172,24 @@ const fetchTrendData = async () => {
   }
 }
 
+const scheduleTrendFetch = () => {
+  if (trendDebounceTimer !== null) {
+    window.clearTimeout(trendDebounceTimer)
+  }
+  trendDebounceTimer = window.setTimeout(async () => {
+    trendDebounceTimer = null
+    await fetchTrendData()
+    writeStatisticsCache()
+  }, 180)
+}
+
 const fetchOtherData = async () => {
+  const currentSerial = ++otherRequestSerial
   const results = await Promise.allSettled([
     getApiMonitor(24),
     getCategoryStats(),
   ])
+  if (currentSerial !== otherRequestSerial) return
 
   let hasError = false
   const [apiRes, catRes] = results
@@ -140,6 +197,7 @@ const fetchOtherData = async () => {
   if (apiRes.status === 'fulfilled') {
     const apiData = (apiRes.value.data?.data ?? []).slice(0, 10).reverse()
     apiOption.value = {
+      animation: false,
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
       grid: { left: 12, right: 16, top: 16, bottom: 8 },
       xAxis: { type: 'value' },
@@ -158,6 +216,7 @@ const fetchOtherData = async () => {
   if (catRes.status === 'fulfilled') {
     const catData = catRes.value.data?.data ?? []
     categoryOption.value = {
+      animation: false,
       tooltip: { trigger: 'item' },
       legend: { bottom: 0, type: 'scroll' },
       series: [{
@@ -181,7 +240,71 @@ const fetchOtherData = async () => {
   }
 }
 
-onMounted(async () => {
+const readStatisticsCache = (): StatisticsCachePayload | null => {
+  try {
+    const raw = sessionStorage.getItem(STATS_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as StatisticsCachePayload
+    if (!parsed || typeof parsed.timestamp !== 'number') return null
+    if (Date.now() - parsed.timestamp > STATS_CACHE_TTL_MS) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const writeStatisticsCache = () => {
+  const payload: StatisticsCachePayload = {
+    timestamp: Date.now(),
+    trendMetric: trendMetric.value,
+    trendPeriod: trendPeriod.value,
+    trendOption: trendOption.value,
+    apiOption: apiOption.value,
+    categoryOption: categoryOption.value,
+  }
+  try {
+    sessionStorage.setItem(STATS_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore cache write failure
+  }
+}
+
+const initStatistics = async () => {
+  const cache = readStatisticsCache()
+  if (cache) {
+    trendMetric.value = cache.trendMetric
+    trendPeriod.value = cache.trendPeriod
+    trendOption.value = cache.trendOption
+    apiOption.value = cache.apiOption
+    categoryOption.value = cache.categoryOption
+    chartsReady.value = true
+    backgroundRefreshTimer = window.setTimeout(() => {
+      backgroundRefreshTimer = null
+      void Promise.all([fetchTrendData(), fetchOtherData()]).then(() => {
+        chartsReady.value = true
+        writeStatisticsCache()
+      })
+    }, 260)
+    return
+  }
+
   await Promise.all([fetchTrendData(), fetchOtherData()])
+  chartsReady.value = true
+  writeStatisticsCache()
+}
+
+onMounted(async () => {
+  await initStatistics()
+})
+
+onBeforeUnmount(() => {
+  if (trendDebounceTimer !== null) {
+    window.clearTimeout(trendDebounceTimer)
+    trendDebounceTimer = null
+  }
+  if (backgroundRefreshTimer !== null) {
+    window.clearTimeout(backgroundRefreshTimer)
+    backgroundRefreshTimer = null
+  }
 })
 </script>

@@ -10,6 +10,9 @@ from app.common.exceptions import NotFoundException, BadRequestException
 
 class SiteConfigService:
     CONFIG_CACHE_TTL = 300
+    DEFAULT_ARTICLE_COVER_IMAGE_KEY = "DEFAULT_ARTICLE_COVER_IMAGE"
+    DEFAULT_ARTICLE_COVER_IMAGE_THUMB_KEY = "DEFAULT_ARTICLE_COVER_IMAGE_THUMB"
+    DEFAULT_ARTICLE_COVER_IMAGE_LARGE_KEY = "DEFAULT_ARTICLE_COVER_IMAGE_LARGE"
     
     DEFAULT_CONFIGS = {
         "SITE_NAME": ("我的博客", "str", "站点名称", True),
@@ -22,6 +25,10 @@ class SiteConfigService:
         "AI_ENABLED": ("true", "bool", "AI功能开关", True),
         "COMMENT_NEED_REVIEW": ("true", "bool", "评论需要审核", True),
         "COMMENT_RATE_LIMIT": ("5", "int", "评论速率限制（每分钟）", False),
+        "COVER_IMAGE_MAX_SIZE_MB": ("2", "int", "封面图最大体积（MB）", True),
+        DEFAULT_ARTICLE_COVER_IMAGE_KEY: ("", "str", "默认文章封面图（支持 data URL 或 http(s) URL）", False),
+        DEFAULT_ARTICLE_COVER_IMAGE_THUMB_KEY: ("", "str", "默认文章封面缩略图（16:9）", False),
+        DEFAULT_ARTICLE_COVER_IMAGE_LARGE_KEY: ("", "str", "默认文章封面大图（16:9）", False),
         "AI_API_KEY": ("", "str", "AI API密钥", False),
         "AI_BASE_URL": ("", "str", "AI API地址", False),
         "AI_MODEL": ("", "str", "AI模型名称", False),
@@ -62,7 +69,64 @@ class SiteConfigService:
         return None
 
     @staticmethod
+    async def get_configs_map(keys: List[str]) -> Dict[str, Optional[str]]:
+        unique_keys: List[str] = []
+        seen = set()
+        for key in keys:
+            if key and key not in seen:
+                unique_keys.append(key)
+                seen.add(key)
+
+        if not unique_keys:
+            return {}
+
+        redis = await get_redis_client()
+        cache_keys = [f"config:{key}" for key in unique_keys]
+        cached_values = await redis.mget(cache_keys)
+
+        result: Dict[str, Optional[str]] = {}
+        missing_keys: List[str] = []
+        for key, cached_value in zip(unique_keys, cached_values):
+            if cached_value is None:
+                missing_keys.append(key)
+            else:
+                result[key] = cached_value
+
+        if not missing_keys:
+            return result
+
+        configs = await SiteConfig.filter(key__in=missing_keys)
+        db_map = {config.key: config.value for config in configs}
+
+        pipeline = redis.pipeline()
+        has_cache_updates = False
+        for key in missing_keys:
+            value = db_map.get(key)
+            result[key] = value
+            if value is not None:
+                pipeline.setex(f"config:{key}", SiteConfigService.CONFIG_CACHE_TTL, value)
+                has_cache_updates = True
+
+        if has_cache_updates:
+            await pipeline.execute()
+
+        return result
+
+    @staticmethod
     async def update_config(key: str, value: str, admin: AdminUser):
+        if key == SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_KEY:
+            config, old_value, normalized_value = await SiteConfigService._update_default_article_cover_config(value)
+            await OperationLogService.log_operation(
+                operator=admin.username,
+                action="update_config",
+                target_type="site_config",
+                target_id=config.id,
+                detail=f"更新配置 {key}: {old_value} -> {normalized_value}",
+                ip="system",
+                result="success"
+            )
+            return config
+
         config = await SiteConfig.get_or_none(key=key)
         if not config:
             raise NotFoundException(f"配置项 {key} 不存在")
@@ -93,6 +157,11 @@ class SiteConfigService:
             key = item.get("key")
             value = item.get("value")
             if key and value is not None:
+                if key == SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_KEY:
+                    config, _, _ = await SiteConfigService._update_default_article_cover_config(value)
+                    updated.append(config)
+                    continue
+
                 config = await SiteConfig.get_or_none(key=key)
                 if config:
                     config.value = value
@@ -115,6 +184,49 @@ class SiteConfigService:
         return updated
 
     @staticmethod
+    async def _update_default_article_cover_config(value: Optional[str]) -> tuple[SiteConfig, str, str]:
+        """更新默认文章封面，并同步产出缩略图与大图变体。"""
+        config = await SiteConfig.get_or_none(key=SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_KEY)
+        if not config:
+            raise NotFoundException(f"配置项 {SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_KEY} 不存在")
+
+        old_value = config.value
+        normalized_cover = ""
+        cover_thumb = ""
+        cover_large = ""
+
+        normalized_input = (value or "").strip()
+        if normalized_input:
+            # 延迟导入，避免 system.service 与 articles.service 顶层循环依赖。
+            from app.modules.articles.service import ArticleService
+
+            normalized_cover = await ArticleService._normalize_cover_image(normalized_input) or ""
+            if normalized_cover:
+                cover_thumb, cover_large = await ArticleService._generate_cover_variants(normalized_cover)
+                cover_thumb = cover_thumb or ""
+                cover_large = cover_large or ""
+
+        config.value = normalized_cover
+        await config.save()
+
+        thumb_config = await SiteConfig.get_or_none(key=SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_THUMB_KEY)
+        if thumb_config:
+            thumb_config.value = cover_thumb
+            await thumb_config.save()
+
+        large_config = await SiteConfig.get_or_none(key=SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_LARGE_KEY)
+        if large_config:
+            large_config.value = cover_large
+            await large_config.save()
+
+        redis = await get_redis_client()
+        await redis.delete(f"config:{SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_KEY}")
+        await redis.delete(f"config:{SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_THUMB_KEY}")
+        await redis.delete(f"config:{SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_LARGE_KEY}")
+
+        return config, old_value, normalized_cover
+
+    @staticmethod
     async def get_public_configs() -> Dict[str, object]:
         """返回前端友好结构（snake_case 键名 + 类型转换）
 
@@ -134,6 +246,13 @@ class SiteConfigService:
             v = raw.get(key)
             return v if v not in (None, "") else default
 
+        def _int(key: str, default: int) -> int:
+            v = raw.get(key)
+            try:
+                return int(v) if v is not None else default
+            except (TypeError, ValueError):
+                return default
+
         return {
             "site_name": _str("SITE_NAME", "我的博客"),
             "site_description": _str("SITE_DESCRIPTION", "一个现代化的博客系统"),
@@ -145,6 +264,7 @@ class SiteConfigService:
             "comment_enabled": _bool("COMMENT_ENABLED", True),
             "comment_audit_enabled": _bool("COMMENT_NEED_REVIEW", True),
             "ai_enabled": _bool("AI_ENABLED", True),
+            "cover_image_max_size_mb": max(1, min(20, _int("COVER_IMAGE_MAX_SIZE_MB", 2))),
         }
 
     @staticmethod

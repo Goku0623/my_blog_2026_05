@@ -37,6 +37,52 @@
           <Field label="站点 Logo">
             <UInput v-model="form.SITE_LOGO" placeholder="图片 URL" />
           </Field>
+          <Field label="默认文章封面图">
+            <UInput
+              v-model="defaultCoverImageUrl"
+              placeholder="图片 URL（可选，保存时自动转换）"
+            />
+            <div class="mt-2 flex flex-wrap gap-2">
+              <input
+                ref="defaultCoverInputRef"
+                type="file"
+                accept="image/*"
+                class="hidden"
+                @change="handleDefaultCoverFileChange"
+              />
+              <UButton variant="outline" @click="handleSelectDefaultCover">
+                <template #icon>
+                  <ImagePlus class="size-4" />
+                </template>
+                选择图片
+              </UButton>
+              <UButton
+                variant="outline"
+                :disabled="!defaultCoverImageUrl.trim()"
+                @click="handleConvertDefaultCoverUrl"
+              >
+                从 URL 转换
+              </UButton>
+              <UButton
+                v-if="defaultCoverPreview"
+                variant="ghost"
+                @click="clearDefaultCover"
+              >
+                <template #icon>
+                  <Trash2 class="size-4" />
+                </template>
+                清除
+              </UButton>
+            </div>
+            <p class="mt-1 text-xs text-[var(--text-muted)]">
+              支持本地上传或 URL，保存后将自动生成 16:9 缩略图；最大约 {{ defaultCoverMaxSizeMb }}MB
+            </p>
+            <img
+              v-if="defaultCoverPreview"
+              :src="defaultCoverPreview"
+              class="mt-2 w-full max-h-40 object-cover rounded-lg border border-[var(--border)]"
+            />
+          </Field>
           <Field label="ICP 备案号">
             <UInput v-model="form.ICP_NUMBER" placeholder="例如：京ICP备xxxxxx号" />
           </Field>
@@ -57,6 +103,12 @@
             <div class="flex items-center gap-2">
               <UInput v-model="form.COMMENT_RATE_LIMIT" type="number" class="w-32" />
               <span class="text-sm text-[var(--text-muted)]">条 / 分钟</span>
+            </div>
+          </Field>
+          <Field label="封面图最大体积">
+            <div class="flex items-center gap-2">
+              <UInput v-model="form.COVER_IMAGE_MAX_SIZE_MB" type="number" class="w-32" />
+              <span class="text-sm text-[var(--text-muted)]">MB（建议 1-20）</span>
             </div>
           </Field>
         </div>
@@ -121,10 +173,10 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, onMounted, ref, h } from 'vue'
-import { Save, Settings, ToggleRight, Cpu, Mail } from 'lucide-vue-next'
+import { reactive, onMounted, ref, computed, h } from 'vue'
+import { Save, Settings, ToggleRight, Cpu, Mail, ImagePlus, Trash2 } from 'lucide-vue-next'
 import { getAdminConfigs, bulkUpdateConfigs } from '@/api/system'
-import { UCard, UInput, UButton, USelect, USwitch, toast } from '@/ui'
+import { UCard, UInput, UButton, USwitch, toast } from '@/ui'
 
 const Field = (props: any, ctx: any) =>
   h('div', { class: 'space-y-1.5' }, [
@@ -152,8 +204,10 @@ interface ConfigForm {
   SITE_KEYWORDS: string
   SITE_AUTHOR: string
   SITE_LOGO: string
+  DEFAULT_ARTICLE_COVER_IMAGE: string
   ICP_NUMBER: string
   COMMENT_RATE_LIMIT: string
+  COVER_IMAGE_MAX_SIZE_MB: string
   AI_API_KEY: string
   AI_BASE_URL: string
   AI_MODEL: string
@@ -173,8 +227,10 @@ const form = reactive<ConfigForm>({
   SITE_KEYWORDS: '',
   SITE_AUTHOR: '',
   SITE_LOGO: '',
+  DEFAULT_ARTICLE_COVER_IMAGE: '',
   ICP_NUMBER: '',
   COMMENT_RATE_LIMIT: '5',
+  COVER_IMAGE_MAX_SIZE_MB: '2',
   AI_API_KEY: '',
   AI_BASE_URL: '',
   AI_MODEL: '',
@@ -194,6 +250,145 @@ const boolForm = reactive({
 })
 
 const saving = ref(false)
+const defaultCoverInputRef = ref<HTMLInputElement | null>(null)
+const defaultCoverImageUrl = ref('')
+const defaultCoverMaxSizeMb = computed(() => {
+  const parsed = Number(form.COVER_IMAGE_MAX_SIZE_MB)
+  if (!Number.isFinite(parsed)) return 2
+  return Math.min(20, Math.max(1, Math.floor(parsed)))
+})
+const maxDefaultCoverBytes = computed(() => defaultCoverMaxSizeMb.value * 1024 * 1024)
+const defaultCoverPreview = computed(() =>
+  form.DEFAULT_ARTICLE_COVER_IMAGE.trim() || defaultCoverImageUrl.value.trim(),
+)
+
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(new Error('read blob failed'))
+    reader.readAsDataURL(blob)
+  })
+
+const loadImageElement = (blob: Blob): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(img)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('load image failed'))
+    }
+    img.src = objectUrl
+  })
+
+const compressImageBlob = async (blob: Blob, maxBytes: number): Promise<Blob> => {
+  const image = await loadImageElement(blob)
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error('canvas unavailable')
+  }
+
+  const sourceLongEdge = Math.max(image.width, image.height)
+  const maxLongEdge = 2000
+  const baseScale = sourceLongEdge > maxLongEdge ? maxLongEdge / sourceLongEdge : 1
+  const baseWidth = Math.max(1, Math.floor(image.width * baseScale))
+  const baseHeight = Math.max(1, Math.floor(image.height * baseScale))
+  const resampleScales = [1, 0.9, 0.8, 0.7, 0.6, 0.5]
+  const qualities = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42]
+
+  for (const scale of resampleScales) {
+    const targetWidth = Math.max(1, Math.floor(baseWidth * scale))
+    const targetHeight = Math.max(1, Math.floor(baseHeight * scale))
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+    ctx.clearRect(0, 0, targetWidth, targetHeight)
+    ctx.drawImage(image, 0, 0, targetWidth, targetHeight)
+
+    for (const quality of qualities) {
+      const compressedBlob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, 'image/jpeg', quality)
+      })
+      if (compressedBlob && compressedBlob.size <= maxBytes) {
+        return compressedBlob
+      }
+    }
+  }
+
+  throw new Error('compress failed')
+}
+
+const convertBlobToDefaultCoverBase64 = async (blob: Blob, sourceLabel: string) => {
+  if (!blob.type.startsWith('image/')) {
+    toast.warning('请选择图片文件')
+    return
+  }
+
+  let finalBlob = blob
+  if (blob.size > maxDefaultCoverBytes.value) {
+    finalBlob = await compressImageBlob(blob, maxDefaultCoverBytes.value)
+  }
+
+  const result = await blobToDataUrl(finalBlob)
+  if (!result.startsWith('data:image/')) {
+    throw new Error('invalid data url')
+  }
+  form.DEFAULT_ARTICLE_COVER_IMAGE = result
+  defaultCoverImageUrl.value = ''
+  const sizeKb = Math.round(finalBlob.size / 1024)
+  toast.success(`${sourceLabel}已转换为 base64（约 ${sizeKb}KB）`)
+}
+
+const handleSelectDefaultCover = () => {
+  defaultCoverInputRef.value?.click()
+}
+
+const clearDefaultCover = () => {
+  form.DEFAULT_ARTICLE_COVER_IMAGE = ''
+  defaultCoverImageUrl.value = ''
+}
+
+const handleDefaultCoverFileChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  try {
+    await convertBlobToDefaultCoverBase64(file, '默认封面图')
+  } catch {
+    toast.error('默认封面图处理失败，请重试')
+  } finally {
+    target.value = ''
+  }
+}
+
+const handleConvertDefaultCoverUrl = async () => {
+  const url = defaultCoverImageUrl.value.trim()
+  if (!url) {
+    toast.warning('请输入图片 URL')
+    return
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    toast.warning('仅支持 http/https URL')
+    return
+  }
+
+  try {
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error('fetch failed')
+    }
+    const blob = await response.blob()
+    await convertBlobToDefaultCoverBase64(blob, 'URL 图片')
+  } catch {
+    // 浏览器跨域限制可能导致前端无法读取远程图片，提交时交给后端转换。
+    form.DEFAULT_ARTICLE_COVER_IMAGE = ''
+    toast.info('前端转换失败，保存时将由后端尝试转换该 URL')
+  }
+}
 
 const fetchConfigs = async () => {
   try {
@@ -207,6 +402,9 @@ const fetchConfigs = async () => {
         ; (boolForm as any)[item.key] = ['true', '1', 'on'].includes(String(item.value).toLowerCase())
       }
     })
+    defaultCoverImageUrl.value = /^https?:\/\//i.test(form.DEFAULT_ARTICLE_COVER_IMAGE.trim())
+      ? form.DEFAULT_ARTICLE_COVER_IMAGE.trim()
+      : ''
   } catch {
     toast.error('获取系统配置失败')
   }
@@ -215,8 +413,17 @@ const fetchConfigs = async () => {
 const handleSave = async () => {
   try {
     saving.value = true
+    const normalizedDefaultCoverData = form.DEFAULT_ARTICLE_COVER_IMAGE.trim()
+    const normalizedDefaultCoverUrl = defaultCoverImageUrl.value.trim()
+    const defaultCoverSubmitValue = normalizedDefaultCoverUrl || normalizedDefaultCoverData
+
     const updatePayload = [
-      ...Object.keys(form).map((key) => ({ key, value: String((form as any)[key] ?? '') })),
+      ...Object.keys(form).map((key) => ({
+        key,
+        value: key === 'DEFAULT_ARTICLE_COVER_IMAGE'
+          ? defaultCoverSubmitValue
+          : String((form as any)[key] ?? ''),
+      })),
       ...Object.keys(boolForm).map((key) => ({ key, value: (boolForm as any)[key] ? 'true' : 'false' })),
     ]
     await bulkUpdateConfigs(updatePayload)

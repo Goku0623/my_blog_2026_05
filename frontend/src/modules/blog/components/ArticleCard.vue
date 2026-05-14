@@ -9,10 +9,11 @@
         <!-- 左：图片 / 渐变占位 -->
         <div class="relative overflow-hidden lg:order-2 aspect-[16/9] lg:aspect-auto">
           <img
-            v-if="article.cover_image"
-            :src="article.cover_image"
+            v-if="coverThumb"
+            :src="coverThumb"
             :alt="article.title"
             loading="lazy"
+            decoding="async"
             class="absolute inset-0 size-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
           />
           <div
@@ -96,18 +97,26 @@
   </router-link>
 
   <!-- ===================== Default 默认杂志式卡片 ===================== -->
+  <!--
+    高度由父级 .article-list-grid 的 grid-auto-rows:440px 固定，
+    h-full 填满行高，内部 grid-rows 再分成封面200px + 内容区其余。
+  -->
   <article
     v-else
-    class="group relative flex flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] transition-all duration-300 hover:-translate-y-1 hover:border-[var(--brand)]/40 hover:shadow-[var(--shadow-lg)]"
+    class="group relative grid h-full w-full min-w-0 max-w-full justify-self-stretch self-stretch grid-cols-1 grid-rows-[200px_minmax(0,1fr)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] transition-all duration-300 hover:-translate-y-1 hover:border-[var(--brand)]/40 hover:shadow-[var(--shadow-lg)]"
   >
-    <!-- 封面 -->
-    <router-link :to="`/article/${article.slug}`" class="block relative overflow-hidden aspect-[16/9]">
+    <!-- 封面：占据 grid 第一行（200px），图片绝对填满，overflow-hidden 阻止溢出 -->
+    <router-link
+      :to="`/article/${article.slug}`"
+      class="relative block h-full w-full overflow-hidden bg-[var(--bg-muted)]"
+    >
       <img
-        v-if="article.cover_image"
-        :src="article.cover_image"
+        v-if="coverThumb"
+        :src="coverThumb"
         :alt="article.title"
         loading="lazy"
-        class="absolute inset-0 size-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+        decoding="async"
+        class="absolute inset-0 block h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
       />
       <div
         v-else
@@ -141,49 +150,43 @@
       </div>
     </router-link>
 
-    <!-- 内容区 -->
-    <div class="flex flex-1 flex-col gap-3 p-5 sm:p-6">
-      <div class="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-muted)] tabular-nums">
-        <span class="inline-flex items-center gap-1">
+    <!-- 内容区：占据 grid 第二行，min-h-0 防止 grid 行被内容撑大，overflow-hidden 兜底 -->
+    <div class="flex min-h-0 w-full min-w-0 flex-col gap-3 overflow-hidden p-5 sm:p-6">
+      <div class="flex shrink-0 items-center gap-3 overflow-hidden whitespace-nowrap text-[11px] text-[var(--text-muted)] tabular-nums">
+        <span class="inline-flex shrink-0 items-center gap-1">
           <Calendar class="size-3" /> {{ formatFriendlyTime(article.created_at) }}
         </span>
-        <span class="inline-flex items-center gap-1">
+        <span class="inline-flex shrink-0 items-center gap-1">
           <Eye class="size-3" /> {{ formatNumber(article.view_count ?? 0) }}
         </span>
-        <span v-if="typeof article.comment_count === 'number'" class="inline-flex items-center gap-1">
+        <span v-if="typeof article.comment_count === 'number'" class="inline-flex shrink-0 items-center gap-1">
           <MessageSquare class="size-3" /> {{ article.comment_count }}
         </span>
       </div>
 
-      <h3 class="font-display text-xl sm:text-[22px] font-semibold leading-snug tracking-tight text-[var(--text)]">
-        <router-link
-          :to="`/article/${article.slug}`"
-          class="link-underline"
-        >
+      <h3 class="line-clamp-2 shrink-0 font-display text-xl font-semibold leading-snug tracking-tight text-[var(--text)] sm:text-[22px]">
+        <router-link :to="`/article/${article.slug}`" class="link-underline">
           {{ article.title }}
         </router-link>
       </h3>
 
-      <p
-        v-if="article.summary"
-        class="text-[14px] leading-relaxed text-[var(--text-soft)] line-clamp-3"
-      >
-        {{ article.summary }}
+      <p class="line-clamp-3 flex-1 overflow-hidden text-[14px] leading-relaxed text-[var(--text-soft)]">
+        {{ article.summary || '　' }}
       </p>
 
-      <div class="mt-auto flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[var(--border)]">
-        <div class="flex flex-wrap items-center gap-1.5">
+      <div class="flex shrink-0 items-center justify-between gap-3 overflow-hidden border-t border-[var(--border)] pt-3">
+        <div class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap">
           <span
             v-for="tag in (article.tags ?? []).slice(0, 3)"
             :key="tag.id"
-            class="px-2 py-0.5 text-[11px] rounded-md text-[var(--text-soft)] bg-[var(--bg-muted)]"
+            class="max-w-[6rem] shrink-0 truncate rounded-md bg-[var(--bg-muted)] px-2 py-0.5 text-[11px] text-[var(--text-soft)]"
           >
             #{{ tag.name }}
           </span>
         </div>
         <router-link
           :to="`/article/${article.slug}`"
-          class="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--brand)] group-hover:gap-2 transition-all"
+          class="inline-flex shrink-0 items-center gap-1 text-[13px] font-medium text-[var(--brand)] transition-all group-hover:gap-2"
         >
           阅读 <ArrowRight class="size-3.5" />
         </router-link>
@@ -193,16 +196,21 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { type Article } from '@/api/articles'
 import { formatFriendlyTime } from '@/utils/time'
 import { Calendar, Eye, MessageSquare, Folder, Star, ArrowRight } from 'lucide-vue-next'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   article: Article
   variant?: 'default' | 'featured' | 'compact'
 }>(), {
   variant: 'default',
 })
+
+// 优先使用后端生成的 16:9 缩略图（卡片体积小、构图统一），
+// 老数据没有缩略图时回退到原 cover_image，保证向后兼容。
+const coverThumb = computed(() => props.article.cover_image_thumb || props.article.cover_image || '')
 
 const formatNumber = (n: number) => {
   if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
@@ -210,3 +218,4 @@ const formatNumber = (n: number) => {
   return String(n)
 }
 </script>
+

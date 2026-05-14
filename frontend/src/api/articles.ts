@@ -21,6 +21,8 @@ export interface Article {
   content?: string
   rendered_content?: string
   cover_image?: string
+  cover_image_thumb?: string
+  cover_image_large?: string
   category?: ArticleCategory | null
   category_id?: number
   category_name?: string

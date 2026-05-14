@@ -69,19 +69,6 @@
       </header>
 
       <!-- ============================================================
-           Cover image
-           ============================================================ -->
-      <div v-if="article.cover_image" class="container-wide -mt-2 mb-8 sm:mb-12">
-        <div class="relative overflow-hidden rounded-3xl border border-[var(--border)] shadow-[var(--shadow-xl)]">
-          <img
-            :src="article.cover_image"
-            :alt="article.title"
-            class="w-full max-h-[520px] object-cover"
-          />
-        </div>
-      </div>
-
-      <!-- ============================================================
            Body：正文 + 侧栏
            ============================================================ -->
       <div class="container-page pb-16">
@@ -136,7 +123,16 @@
 
             <!-- 评论 -->
             <div class="mt-12">
-              <CommentSection v-if="canComment" :article-id="article.id" />
+              <div ref="commentTrigger" class="h-px w-full" aria-hidden="true"></div>
+              <CommentSection v-if="canComment && shouldRenderComment" :article-id="article.id" />
+              <div
+                v-else-if="canComment"
+                class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6"
+              >
+                <USkeleton height="20px" class="max-w-36 mb-4" />
+                <USkeleton height="14px" class="mb-2" />
+                <USkeleton height="14px" class="w-2/3" />
+              </div>
               <div
                 v-else
                 class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 text-center text-sm text-[var(--text-soft)]"
@@ -217,7 +213,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick, useTemplateRef } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick, useTemplateRef, defineAsyncComponent } from 'vue'
 import { useRoute } from 'vue-router'
 import { getArticle, type Article } from '@/api/articles'
 import { useMarkdown } from '@/composables/useMarkdown'
@@ -225,7 +221,6 @@ import { useSiteStore } from '@/stores/site'
 import { formatFriendlyTime } from '@/utils/time'
 import { ArrowUp, ArrowRight, Calendar, Eye, Folder, Hash, Clock } from 'lucide-vue-next'
 import { UEmpty, USkeleton, toast } from '@/ui'
-import CommentSection from '../components/CommentSection.vue'
 import SiteNavbar from '../components/SiteNavbar.vue'
 import SiteFooter from '../components/SiteFooter.vue'
 
@@ -236,15 +231,27 @@ const siteStore = useSiteStore()
 const article = ref<Article | null>(null)
 const loading = ref(false)
 const articleBody = useTemplateRef<HTMLElement>('articleBody')
+const commentTrigger = useTemplateRef<HTMLElement>('commentTrigger')
+const shouldRenderComment = ref(false)
+let commentObserver: IntersectionObserver | null = null
+const CommentSection = defineAsyncComponent(() => import('../components/CommentSection.vue'))
 
 interface TocItem {
   id: string
   text: string
   level: number
 }
+interface HeadingPosition {
+  id: string
+  top: number
+}
 const toc = ref<TocItem[]>([])
+const headingPositions = ref<HeadingPosition[]>([])
 const activeHeading = ref('')
 const progressPercent = ref(0)
+let scrollRafId: number | null = null
+let articleImageLoadAbortController: AbortController | null = null
+let resizeDebounceTimer: number | null = null
 
 const renderedContent = computed(() => {
   if (!article.value) return ''
@@ -279,8 +286,10 @@ const fetchArticle = async () => {
     article.value = res.data?.data ?? null
     if (article.value) {
       document.title = `${article.value.title} - ${article.value.category?.name ?? '博客'}`
+      shouldRenderComment.value = false
       await nextTick()
       buildToc()
+      setupCommentObserver()
     }
   } catch (e) {
     console.error(e)
@@ -293,10 +302,13 @@ const fetchArticle = async () => {
 const buildToc = () => {
   if (!articleBody.value) {
     toc.value = []
+    headingPositions.value = []
+    activeHeading.value = ''
     return
   }
   const headings = articleBody.value.querySelectorAll('h2, h3, h4')
   const items: TocItem[] = []
+  const positions: HeadingPosition[] = []
   headings.forEach((h, i) => {
     const el = h as HTMLElement
     if (!el.id) el.id = `heading-${i}`
@@ -306,8 +318,28 @@ const buildToc = () => {
       text: el.innerText || el.textContent || '',
       level,
     })
+    positions.push({
+      id: el.id,
+      top: window.scrollY + el.getBoundingClientRect().top,
+    })
   })
   toc.value = items
+  headingPositions.value = positions
+}
+
+const bindBodyImageLoadListener = () => {
+  articleImageLoadAbortController?.abort()
+  if (!articleBody.value) return
+  const controller = new AbortController()
+  articleImageLoadAbortController = controller
+
+  const images = articleBody.value.querySelectorAll('img')
+  images.forEach((img) => {
+    if (!img.complete) {
+      img.addEventListener('load', handleResize, { signal: controller.signal })
+      img.addEventListener('error', handleResize, { signal: controller.signal })
+    }
+  })
 }
 
 const onTocClick = (e: MouseEvent, id: string) => {
@@ -320,21 +352,66 @@ const onTocClick = (e: MouseEvent, id: string) => {
 }
 
 const updateScrollState = () => {
-  const scrollTop = window.scrollY
+  const currentScrollTop = window.scrollY
   const docHeight = document.documentElement.scrollHeight - window.innerHeight
-  progressPercent.value = docHeight > 0 ? Math.min(100, (scrollTop / docHeight) * 100) : 0
+  progressPercent.value = docHeight > 0 ? Math.min(100, (currentScrollTop / docHeight) * 100) : 0
 
-  // 找到当前激活的 heading
-  if (toc.value.length === 0) return
+  if (headingPositions.value.length === 0) {
+    activeHeading.value = ''
+    return
+  }
+
   const offset = 120
-  let current = toc.value[0]?.id || ''
-  for (const item of toc.value) {
-    const el = document.getElementById(item.id)
-    if (el && el.getBoundingClientRect().top - offset <= 0) {
-      current = item.id
+  const currentY = currentScrollTop + offset
+  let current = headingPositions.value[0].id
+  for (const heading of headingPositions.value) {
+    if (heading.top <= currentY) {
+      current = heading.id
+    } else {
+      break
     }
   }
   activeHeading.value = current
+}
+
+const requestScrollStateUpdate = () => {
+  if (scrollRafId !== null) return
+  scrollRafId = window.requestAnimationFrame(() => {
+    scrollRafId = null
+    updateScrollState()
+  })
+}
+
+const handleResize = () => {
+  if (resizeDebounceTimer !== null) {
+    window.clearTimeout(resizeDebounceTimer)
+  }
+  resizeDebounceTimer = window.setTimeout(() => {
+    resizeDebounceTimer = null
+    buildToc()
+    requestScrollStateUpdate()
+  }, 150)
+}
+
+const setupCommentObserver = () => {
+  commentObserver?.disconnect()
+  commentObserver = null
+  if (!canComment.value) return
+
+  const trigger = commentTrigger.value
+  if (!trigger || !('IntersectionObserver' in window)) {
+    shouldRenderComment.value = true
+    return
+  }
+
+  commentObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) {
+      shouldRenderComment.value = true
+      commentObserver?.disconnect()
+      commentObserver = null
+    }
+  }, { rootMargin: '360px 0px' })
+  commentObserver.observe(trigger)
 }
 
 const scrollTop = () => {
@@ -348,13 +425,38 @@ watch(
   }
 )
 
+watch(renderedContent, async () => {
+  await nextTick()
+  buildToc()
+  bindBodyImageLoadListener()
+  setupCommentObserver()
+  requestScrollStateUpdate()
+})
+
+watch(canComment, async () => {
+  await nextTick()
+  setupCommentObserver()
+})
+
 onMounted(() => {
   fetchArticle()
-  window.addEventListener('scroll', updateScrollState, { passive: true })
-  updateScrollState()
+  window.addEventListener('scroll', requestScrollStateUpdate, { passive: true })
+  window.addEventListener('resize', handleResize, { passive: true })
+  requestScrollStateUpdate()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('scroll', updateScrollState)
+  window.removeEventListener('scroll', requestScrollStateUpdate)
+  window.removeEventListener('resize', handleResize)
+  articleImageLoadAbortController?.abort()
+  commentObserver?.disconnect()
+  if (resizeDebounceTimer !== null) {
+    window.clearTimeout(resizeDebounceTimer)
+    resizeDebounceTimer = null
+  }
+  if (scrollRafId !== null) {
+    window.cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
+  }
 })
 </script>

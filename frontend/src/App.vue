@@ -4,8 +4,8 @@ import { UToaster } from '@/ui'
 
 <template>
   <router-view v-slot="{ Component, route }">
-    <transition name="page" mode="out-in">
-      <component :is="Component" :key="route.fullPath" />
+    <transition name="page">
+      <component :is="Component" :key="route.path" />
     </transition>
   </router-view>
   <UToaster />

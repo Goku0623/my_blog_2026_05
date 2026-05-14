@@ -102,9 +102,12 @@
           </div>
 
           <div v-else class="p-5 sm:p-7 space-y-4">
-            <div class="flex flex-wrap items-center gap-2 text-sm">
-              <span class="font-medium text-[var(--text)]">{{ guestDisplayName }}</span>
-              <span class="text-xs text-[var(--text-muted)]">写下你想说的话…</span>
+            <div class="flex items-center gap-3">
+              <UAvatar :name="guestDisplayName" :size="40" />
+              <div class="flex flex-wrap items-center gap-2 text-sm min-w-0">
+                <span class="font-medium text-[var(--text)]">{{ guestDisplayName }}</span>
+                <span class="text-xs text-[var(--text-muted)]">写下你想说的话…</span>
+              </div>
             </div>
 
             <div class="flex gap-1 border-b border-[var(--border)]">
@@ -161,7 +164,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { AxiosError } from 'axios'
 import { MessageCircle, Send } from 'lucide-vue-next'
 import { getGuestbookMessages, createGuestbookMessage, type GuestbookMessage } from '@/api/guestbook'
@@ -190,6 +193,8 @@ const loading = ref(false)
 
 const formContent = ref('')
 const submitting = ref(false)
+const renderedPreview = ref('')
+let previewRenderTimer: number | null = null
 
 const guestDisplayName = computed(() => {
   const adminName = authStore.adminInfo?.username?.trim()
@@ -200,10 +205,25 @@ const guestDisplayName = computed(() => {
   return guestStore.guestName || (short ? `游客${short}` : '游客')
 })
 
-const renderedPreview = computed(() => {
-  if (!formContent.value.trim()) return ''
-  return render(formContent.value)
-})
+const renderPreview = () => {
+  renderedPreview.value = formContent.value.trim() ? render(formContent.value) : ''
+}
+
+const schedulePreviewRender = (immediate = false) => {
+  if (previewRenderTimer !== null) {
+    window.clearTimeout(previewRenderTimer)
+    previewRenderTimer = null
+  }
+  if (activeTab.value !== 'preview') return
+  if (immediate) {
+    renderPreview()
+    return
+  }
+  previewRenderTimer = window.setTimeout(() => {
+    previewRenderTimer = null
+    renderPreview()
+  }, 120)
+}
 
 const formatTime = (dateStr: string) => {
   const d = new Date(dateStr)
@@ -271,6 +291,23 @@ onMounted(async () => {
     // 游客初始化失败不阻塞留言列表展示
   }
   await fetchMessages()
+})
+
+watch(formContent, () => {
+  schedulePreviewRender()
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'preview') {
+    schedulePreviewRender(true)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (previewRenderTimer !== null) {
+    window.clearTimeout(previewRenderTimer)
+    previewRenderTimer = null
+  }
 })
 </script>
 

@@ -83,8 +83,8 @@
     </section>
 
     <main class="flex-1 container-page pb-20">
-      <div v-if="loading" class="grid gap-6 sm:grid-cols-2">
-        <USkeleton v-for="i in 4" :key="i" class="h-72 rounded-2xl" />
+      <div v-if="loading" class="article-list-grid">
+        <USkeleton v-for="i in 4" :key="i" class="h-[440px] rounded-2xl" />
       </div>
       <UEmpty
         v-else-if="!articles.length && keyword"
@@ -96,7 +96,7 @@
         <SearchIcon class="size-8 mx-auto mb-3 opacity-50" />
         请输入关键词开始搜索
       </div>
-      <div v-else class="grid gap-6 sm:grid-cols-2">
+      <div v-else class="article-list-grid">
         <ArticleCard v-for="a in articles" :key="a.id" :article="a" />
       </div>
 

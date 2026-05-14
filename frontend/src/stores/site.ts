@@ -12,6 +12,7 @@ export const useSiteStore = defineStore('site', () => {
     comment_enabled: true,
     comment_audit_enabled: true,
     ai_enabled: true,
+    cover_image_max_size_mb: 2,
   })
 
   const loading = ref(false)

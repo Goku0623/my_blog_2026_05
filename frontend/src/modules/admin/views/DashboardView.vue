@@ -29,7 +29,15 @@
           </div>
         </template>
         <div class="h-72">
-          <v-chart class="size-full" :option="viewTrendOption" autoresize />
+          <v-chart
+            v-if="chartsReady"
+            class="size-full"
+            :option="viewTrendOption"
+            :autoresize="{ throttle: 200 }"
+          />
+          <div v-else class="h-full p-4">
+            <USkeleton class="h-full rounded-xl" />
+          </div>
         </div>
       </UCard>
 
@@ -41,7 +49,15 @@
           </div>
         </template>
         <div class="h-72">
-          <v-chart class="size-full" :option="commentTrendOption" autoresize />
+          <v-chart
+            v-if="chartsReady"
+            class="size-full"
+            :option="commentTrendOption"
+            :autoresize="{ throttle: 200 }"
+          />
+          <div v-else class="h-full p-4">
+            <USkeleton class="h-full rounded-xl" />
+          </div>
         </div>
       </UCard>
     </section>
@@ -114,7 +130,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime, formatFriendlyTime } from '@/utils/time'
 import { FileText, Eye, MessageSquare } from 'lucide-vue-next'
-import { UCard, UTag, UAvatar, UEmpty, toast } from '@/ui'
+import { UCard, UTag, UAvatar, UEmpty, USkeleton, toast } from '@/ui'
 import StatCard from '../components/StatCard.vue'
 import HealthRow from '../components/HealthRow.vue'
 
@@ -140,12 +156,28 @@ const health = ref<SystemHealth>({
 
 const recentComments = ref<RecentComment[]>([])
 const updatedAt = ref<string>(new Date().toISOString())
+const chartsReady = ref(false)
+let idleTaskHandle: number | null = null
 
 const viewTrendOption = ref<any>(makeLineOption([], '#9333ea'))
 const commentTrendOption = ref<any>(makeBarOption([], '#10b981'))
 
+const DASHBOARD_CACHE_KEY = 'admin_dashboard_cache_v1'
+const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000
+
+interface DashboardCachePayload {
+  timestamp: number
+  stats: DashboardStats
+  health: SystemHealth
+  recentComments: RecentComment[]
+  viewTrendOption: any
+  commentTrendOption: any
+  updatedAt: string
+}
+
 function makeLineOption(data: { date: string; value: number }[], color: string) {
   return {
+    animation: false,
     tooltip: { trigger: 'axis' },
     grid: { left: 12, right: 12, top: 16, bottom: 6 },
     xAxis: { type: 'category', boundaryGap: false, data: data.map((d) => d.date), axisLine: { lineStyle: { color: 'var(--border)' } } },
@@ -168,6 +200,7 @@ function makeLineOption(data: { date: string; value: number }[], color: string) 
 
 function makeBarOption(data: { date: string; value: number }[], color: string) {
   return {
+    animation: false,
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     grid: { left: 12, right: 12, top: 16, bottom: 6 },
     xAxis: { type: 'category', data: data.map((d) => d.date), axisLine: { lineStyle: { color: 'var(--border)' } } },
@@ -189,12 +222,10 @@ const fetchData = async () => {
     getDashboardStats(),
     getSystemHealth(),
     getRecentComments(5),
-    getTrends('views', 'month'),
-    getTrends('comments', 'week'),
   ])
 
   let hasError = false
-  const [statsRes, healthRes, commentsRes, viewsRes, commentsTrendRes] = results
+  const [statsRes, healthRes, commentsRes] = results
 
   if (statsRes.status === 'fulfilled') {
     stats.value = statsRes.value.data?.data ?? stats.value
@@ -214,6 +245,21 @@ const fetchData = async () => {
     hasError = true
   }
 
+  updatedAt.value = new Date().toISOString()
+  if (hasError) {
+    toast.warning('部分仪表盘数据暂不可用，已使用默认值展示')
+  }
+}
+
+const fetchTrendData = async () => {
+  const results = await Promise.allSettled([
+    getTrends('views', 'month'),
+    getTrends('comments', 'week'),
+  ])
+
+  let hasError = false
+  const [viewsRes, commentsTrendRes] = results
+
   if (viewsRes.status === 'fulfilled') {
     viewTrendOption.value = makeLineOption(viewsRes.value.data?.data?.data ?? [], '#9333ea')
   } else {
@@ -226,16 +272,82 @@ const fetchData = async () => {
     hasError = true
   }
 
-  updatedAt.value = new Date().toISOString()
+  chartsReady.value = true
   if (hasError) {
-    toast.warning('部分仪表盘数据暂不可用，已使用默认值展示')
+    toast.warning('部分趋势数据暂不可用，已降级展示')
   }
 }
 
-onMounted(fetchData)
+const readDashboardCache = (): DashboardCachePayload | null => {
+  try {
+    const raw = sessionStorage.getItem(DASHBOARD_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as DashboardCachePayload
+    if (!parsed || typeof parsed.timestamp !== 'number') return null
+    if (Date.now() - parsed.timestamp > DASHBOARD_CACHE_TTL_MS) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const writeDashboardCache = () => {
+  const payload: DashboardCachePayload = {
+    timestamp: Date.now(),
+    stats: stats.value,
+    health: health.value,
+    recentComments: recentComments.value,
+    viewTrendOption: viewTrendOption.value,
+    commentTrendOption: commentTrendOption.value,
+    updatedAt: updatedAt.value,
+  }
+  try {
+    sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore cache write failure
+  }
+}
+
+const scheduleTrendFetch = () => {
+  const run = async () => {
+    await fetchTrendData()
+    writeDashboardCache()
+  }
+  const ric = window.requestIdleCallback
+  if (typeof ric === 'function') {
+    idleTaskHandle = ric(() => { void run() }, { timeout: 1200 })
+    return
+  }
+  idleTaskHandle = window.setTimeout(() => { void run() }, 150)
+}
+
+const initDashboard = async () => {
+  const cache = readDashboardCache()
+  if (cache) {
+    stats.value = cache.stats
+    health.value = cache.health
+    recentComments.value = cache.recentComments
+    viewTrendOption.value = cache.viewTrendOption
+    commentTrendOption.value = cache.commentTrendOption
+    updatedAt.value = cache.updatedAt
+    chartsReady.value = true
+  }
+
+  await fetchData()
+  writeDashboardCache()
+  if (cache) {
+    scheduleTrendFetch()
+  } else {
+    await fetchTrendData()
+    writeDashboardCache()
+  }
+}
+
+onMounted(initDashboard)
 
 const handleAdminProfileUpdated = () => {
-  fetchData()
+  chartsReady.value = false
+  void initDashboard()
 }
 
 onMounted(() => {
@@ -244,5 +356,14 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('admin-profile-updated', handleAdminProfileUpdated)
+  if (idleTaskHandle !== null) {
+    const cic = window.cancelIdleCallback
+    if (typeof cic === 'function') {
+      cic(idleTaskHandle)
+    } else {
+      window.clearTimeout(idleTaskHandle)
+    }
+    idleTaskHandle = null
+  }
 })
 </script>

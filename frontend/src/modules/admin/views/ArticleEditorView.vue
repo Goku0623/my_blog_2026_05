@@ -27,12 +27,29 @@
         </div>
         <div class="space-y-1.5">
           <label class="text-sm font-medium">文章内容 <span class="text-rose-500">*</span></label>
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              ref="contentImageInputRef"
+              type="file"
+              accept="image/*"
+              class="hidden"
+              @change="handleContentImageChange"
+            />
+            <UButton variant="outline" @click="handleSelectContentImage">
+              <template #icon><ImagePlus class="size-4" /></template>
+              插入正文图片
+            </UButton>
+            <p class="text-xs text-[var(--text-muted)]">
+              自动压缩并以 base64 插入 Markdown（单张上限约 {{ contentImageMaxSizeMb }}MB）
+            </p>
+          </div>
           <div class="rounded-xl border border-[var(--border-strong)] overflow-hidden grid grid-cols-1 lg:grid-cols-2 min-h-[480px]">
             <div class="border-r border-[var(--border)] flex flex-col">
               <div class="px-3 py-2 text-xs font-medium text-[var(--text-muted)] bg-[var(--bg-soft)] border-b border-[var(--border)]">
                 Markdown 编辑
               </div>
               <textarea
+                ref="contentTextareaRef"
                 v-model="formData.content"
                 placeholder="支持 Markdown 语法…"
                 class="flex-1 w-full p-4 bg-[var(--surface)] text-[var(--text)] font-mono text-sm leading-relaxed outline-none resize-none"
@@ -118,7 +135,37 @@
             </div>
             <div class="space-y-1.5">
               <label class="text-xs text-[var(--text-soft)]">封面图</label>
-              <UInput v-model="formData.cover_image" placeholder="图片 URL" />
+              <UInput v-model="coverImageUrl" placeholder="图片 URL（可选，提交时自动转 base64）" />
+              <div class="flex flex-wrap gap-2">
+                <input
+                  ref="coverInputRef"
+                  type="file"
+                  accept="image/*"
+                  class="hidden"
+                  @change="handleCoverFileChange"
+                />
+                <UButton variant="outline" @click="handleSelectCover">
+                  <template #icon><ImagePlus class="size-4" /></template>
+                  选择图片
+                </UButton>
+                <UButton
+                  variant="outline"
+                  :disabled="!coverImageUrl.trim()"
+                  @click="handleConvertCoverUrl"
+                >
+                  从URL转换
+                </UButton>
+                <UButton
+                  v-if="formData.cover_image"
+                  variant="ghost"
+                  @click="clearCoverImage"
+                >
+                  <template #icon><Trash2 class="size-4" /></template>
+                  清除
+                </UButton>
+              </div>
+              <p class="text-xs text-[var(--text-muted)]">支持本地上传或 URL，最终都会以 base64 存储</p>
+              <p class="text-xs text-[var(--text-muted)]">当前自动压缩上限：{{ coverMaxSizeMb }}MB</p>
               <img
                 v-if="formData.cover_image"
                 :src="formData.cover_image"
@@ -167,14 +214,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Save, Rocket, ChevronDown } from 'lucide-vue-next'
+import { Save, Rocket, ChevronDown, ImagePlus, Trash2 } from 'lucide-vue-next'
 import {
   getAdminArticle, createArticle, updateArticle,
   saveArticleDraftCopy, publishDraftToSource,
   getCategories, getTags, createCategory, createTag, type Category, type Tag,
 } from '@/api/articles'
+import { getSiteConfig } from '@/api/system'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { formatDateTime } from '@/utils/time'
 import { UCard, UInput, USelect, USwitch, UButton, UTag, toast } from '@/ui'
@@ -199,6 +247,15 @@ const newCategoryName = ref('')
 const newTagName = ref('')
 const creatingCategory = ref(false)
 const creatingTag = ref(false)
+const coverInputRef = ref<HTMLInputElement | null>(null)
+const contentImageInputRef = ref<HTMLInputElement | null>(null)
+const contentTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const coverImageUrl = ref('')
+const coverMaxSizeMb = ref(2)
+const maxCoverImageBytes = computed(() => coverMaxSizeMb.value * 1024 * 1024)
+const contentImageMaxSizeMb = computed(() => Math.max(3, Math.min(10, coverMaxSizeMb.value * 2)))
+const maxContentImageBytes = computed(() => contentImageMaxSizeMb.value * 1024 * 1024)
+const PREVIEW_PLACEHOLDER_HTML = '<p class="text-sm text-[var(--text-muted)] text-center mt-12">在左侧输入 Markdown 内容…</p>'
 
 const formData = reactive({
   title: '',
@@ -215,13 +272,29 @@ const formData = reactive({
   seo_description: '',
 })
 
-const renderedPreview = computed(() =>
-  formData.content
-    ? render(formData.content)
-    : '<p class="text-sm text-[var(--text-muted)] text-center mt-12">在左侧输入 Markdown 内容…</p>'
-)
+const renderedPreview = ref(PREVIEW_PLACEHOLDER_HTML)
+let previewRenderTimer: number | null = null
 
 let autoSaveTimer: number | null = null
+
+const renderPreview = () => {
+  renderedPreview.value = formData.content ? render(formData.content) : PREVIEW_PLACEHOLDER_HTML
+}
+
+const schedulePreviewRender = (immediate = false) => {
+  if (previewRenderTimer !== null) {
+    window.clearTimeout(previewRenderTimer)
+    previewRenderTimer = null
+  }
+  if (immediate) {
+    renderPreview()
+    return
+  }
+  previewRenderTimer = window.setTimeout(() => {
+    previewRenderTimer = null
+    renderPreview()
+  }, 120)
+}
 
 const createSlug = (rawName: string, prefix: 'cat' | 'tag') => {
   const normalized = rawName
@@ -238,11 +311,13 @@ const createSlug = (rawName: string, prefix: 'cat' | 'tag') => {
 
 const fetchMetadata = async () => {
   try {
-    const [catRes, tagRes] = await Promise.all([getCategories(), getTags()])
+    const [catRes, tagRes, siteRes] = await Promise.all([getCategories(), getTags(), getSiteConfig()])
     categories.value = catRes.data?.data ?? []
     tags.value = tagRes.data?.data ?? []
+    const maxMb = Number(siteRes.data?.data?.cover_image_max_size_mb ?? 2)
+    coverMaxSizeMb.value = Number.isFinite(maxMb) ? Math.min(20, Math.max(1, Math.floor(maxMb))) : 2
   } catch {
-    toast.error('获取分类或标签失败')
+    toast.error('获取配置失败，已使用默认封面图大小限制')
   }
 }
 
@@ -257,6 +332,7 @@ const fetchArticle = async () => {
     formData.category_id = data.category?.id ?? data.category_id
     formData.tag_ids = (data.tags ?? []).map((t: any) => t.id)
     formData.cover_image = data.cover_image ?? ''
+    coverImageUrl.value = data.cover_image?.startsWith('http') ? data.cover_image : ''
     formData.is_featured = data.is_featured === true
     formData.status = data.status ?? 'draft'
     originalStatus.value = data.status ?? 'draft'
@@ -275,6 +351,194 @@ const toggleTag = (id: number) => {
   const idx = formData.tag_ids.indexOf(id)
   if (idx >= 0) formData.tag_ids.splice(idx, 1)
   else formData.tag_ids.push(id)
+}
+
+const handleSelectCover = () => {
+  coverInputRef.value?.click()
+}
+
+const clearCoverImage = () => {
+  formData.cover_image = ''
+  coverImageUrl.value = ''
+}
+
+const loadImageElement = (blob: Blob): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(img)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('load image failed'))
+    }
+    img.src = objectUrl
+  })
+}
+
+const compressImageBlob = async (
+  blob: Blob,
+  maxBytes: number,
+  maxLongEdge = 0,
+): Promise<Blob> => {
+  const image = await loadImageElement(blob)
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error('canvas unavailable')
+  }
+
+  const sourceLongEdge = Math.max(image.width, image.height)
+  const baseScale = maxLongEdge > 0 && sourceLongEdge > maxLongEdge ? maxLongEdge / sourceLongEdge : 1
+  const baseWidth = Math.max(1, Math.floor(image.width * baseScale))
+  const baseHeight = Math.max(1, Math.floor(image.height * baseScale))
+
+  const resampleScales = [1, 0.9, 0.8, 0.7, 0.6, 0.5]
+  const qualities = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42]
+
+  for (const scale of resampleScales) {
+    const targetWidth = Math.max(1, Math.floor(baseWidth * scale))
+    const targetHeight = Math.max(1, Math.floor(baseHeight * scale))
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+    ctx.clearRect(0, 0, targetWidth, targetHeight)
+    ctx.drawImage(image, 0, 0, targetWidth, targetHeight)
+
+    for (const quality of qualities) {
+      const compressedBlob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob(resolve, 'image/jpeg', quality)
+      })
+      if (compressedBlob && compressedBlob.size <= maxBytes) {
+        return compressedBlob
+      }
+    }
+  }
+
+  throw new Error('compress failed')
+}
+
+const convertBlobToCoverBase64 = async (blob: Blob, sourceLabel: string) => {
+  if (!blob.type.startsWith('image/')) {
+    toast.warning('请选择图片文件')
+    return
+  }
+
+  let finalBlob = blob
+  if (blob.size > maxCoverImageBytes.value) {
+    finalBlob = await compressImageBlob(blob, maxCoverImageBytes.value)
+  }
+
+  const result = await blobToDataUrl(finalBlob)
+  if (!result.startsWith('data:image/')) {
+    throw new Error('invalid data url')
+  }
+  formData.cover_image = result
+  const sizeKb = Math.round(finalBlob.size / 1024)
+  toast.success(`${sourceLabel}已转换为 base64（约 ${sizeKb}KB）`)
+}
+
+const handleCoverFileChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  try {
+    await convertBlobToCoverBase64(file, '封面图')
+  } catch {
+    toast.error('图片处理失败，请重试')
+  } finally {
+    target.value = ''
+  }
+}
+
+const blobToDataUrl = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(new Error('read blob failed'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+const handleConvertCoverUrl = async () => {
+  const url = coverImageUrl.value.trim()
+  if (!url) {
+    toast.warning('请输入图片 URL')
+    return
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    toast.warning('仅支持 http/https URL')
+    return
+  }
+
+  try {
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error('fetch failed')
+    }
+    const blob = await response.blob()
+    await convertBlobToCoverBase64(blob, 'URL 图片')
+  } catch {
+    // 浏览器跨域限制可能导致前端无法读取远程图片，提交时交给后端转换。
+    formData.cover_image = ''
+    toast.info('前端转换失败，保存时将由后端尝试转换该 URL')
+  }
+}
+
+const handleSelectContentImage = () => {
+  contentImageInputRef.value?.click()
+}
+
+const insertTextAtCursor = (text: string) => {
+  const textarea = contentTextareaRef.value
+  if (!textarea) {
+    formData.content = `${formData.content}\n${text}`.trim()
+    return
+  }
+
+  const start = textarea.selectionStart ?? formData.content.length
+  const end = textarea.selectionEnd ?? formData.content.length
+  const before = formData.content.slice(0, start)
+  const after = formData.content.slice(end)
+  formData.content = `${before}${text}${after}`
+
+  requestAnimationFrame(() => {
+    const cursor = start + text.length
+    textarea.focus()
+    textarea.setSelectionRange(cursor, cursor)
+  })
+}
+
+const handleContentImageChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  try {
+    let finalBlob: Blob = file
+    if (file.size > maxContentImageBytes.value) {
+      finalBlob = await compressImageBlob(file, maxContentImageBytes.value, 1600)
+    }
+    const imageDataUrl = await blobToDataUrl(finalBlob)
+    if (!imageDataUrl.startsWith('data:image/')) {
+      throw new Error('invalid data url')
+    }
+
+    const safeName = (file.name || 'image')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^\w\u4e00-\u9fa5-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '') || 'image'
+    const markdown = `\n![${safeName}](${imageDataUrl})\n`
+    insertTextAtCursor(markdown)
+    toast.success('正文图片已插入（base64）')
+  } catch {
+    toast.error('正文图片处理失败，请重试')
+  } finally {
+    target.value = ''
+  }
 }
 
 const handleCreateCategory = async () => {
@@ -363,39 +627,40 @@ const submit = async (publish: boolean) => {
 
   try {
     saving.value = true
+    let shouldJumpToArticles = false
+    const normalizedBase64 = formData.cover_image.trim()
+    const normalizedUrl = coverImageUrl.value.trim()
     const payload = {
       ...formData,
+      cover_image: normalizedBase64 || normalizedUrl || null,
       status: publish ? 'published' : 'draft',
     }
     if (isEdit.value) {
       if (!publish && !isDraftCopy.value && originalStatus.value === 'published') {
-        const res = await saveArticleDraftCopy(articleId.value, payload as any)
-        const draftId = res.data?.data?.id
+        await saveArticleDraftCopy(articleId.value, payload as any)
         toast.success('已生成草稿副本，原发布文章不受影响')
-        if (draftId) {
-          router.replace(`/admin/articles/edit/${draftId}`)
-        }
+        shouldJumpToArticles = true
       } else if (publish && isDraftCopy.value) {
         await publishDraftToSource(articleId.value)
         toast.success('草稿已同步到原文并发布')
-        if (sourceArticleId.value) {
-          router.replace(`/admin/articles/edit/${sourceArticleId.value}`)
-        } else {
-          router.push('/admin/articles')
-        }
+        shouldJumpToArticles = true
       } else {
         await updateArticle(articleId.value, payload as any)
         if (publish) originalStatus.value = 'published'
         else originalStatus.value = 'draft'
         toast.success(publish ? '文章已更新发布' : '草稿已保存')
+        shouldJumpToArticles = true
       }
     } else {
       await createArticle(payload as any)
       localStorage.removeItem('article_draft')
       toast.success(publish ? '文章已发布' : '草稿已保存')
-      router.push('/admin/articles')
+      shouldJumpToArticles = true
     }
     lastSaved.value = formatDateTime(new Date().toISOString())
+    if (shouldJumpToArticles) {
+      router.push('/admin/articles')
+    }
   } catch {
     toast.error('保存失败')
   } finally {
@@ -416,7 +681,15 @@ onMounted(async () => {
   }
 })
 
+watch(() => formData.content, () => {
+  schedulePreviewRender()
+}, { immediate: true })
+
 onUnmounted(() => {
   if (autoSaveTimer) window.clearInterval(autoSaveTimer)
+  if (previewRenderTimer !== null) {
+    window.clearTimeout(previewRenderTimer)
+    previewRenderTimer = null
+  }
 })
 </script>

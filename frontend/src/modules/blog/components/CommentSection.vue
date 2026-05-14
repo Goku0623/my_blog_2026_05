@@ -133,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { AxiosError } from 'axios'
 import { useGuestStore } from '@/stores/guest'
 import { useAuthStore } from '@/stores/auth'
@@ -170,8 +170,9 @@ let aiPollingAttempts = 0
 let aiPollingRequestInFlight = false
 const AI_POLL_INTERVAL_MS = 2000
 const AI_POLL_MAX_ATTEMPTS = 30
+let previewRenderTimer: number | null = null
 
-const renderedPreview = computed(() => (commentForm.content ? render(commentForm.content) : ''))
+const renderedPreview = ref('')
 const currentDisplayName = computed(() => {
   const adminName = authStore.adminInfo?.username?.trim()
   if (adminName) return adminName
@@ -302,6 +303,26 @@ const cancelReply = () => {
 
 const handlePageChange = () => fetchComments()
 
+const renderPreview = () => {
+  renderedPreview.value = commentForm.content.trim() ? render(commentForm.content) : ''
+}
+
+const schedulePreviewRender = (immediate = false) => {
+  if (previewRenderTimer !== null) {
+    window.clearTimeout(previewRenderTimer)
+    previewRenderTimer = null
+  }
+  if (activeTab.value !== 'preview') return
+  if (immediate) {
+    renderPreview()
+    return
+  }
+  previewRenderTimer = window.setTimeout(() => {
+    previewRenderTimer = null
+    renderPreview()
+  }, 120)
+}
+
 const handleAdminProfileUpdated = () => {
   void fetchComments(true)
 }
@@ -323,8 +344,22 @@ onMounted(async () => {
   window.addEventListener('storage', handleStorage)
 })
 
+watch(() => commentForm.content, () => {
+  schedulePreviewRender()
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'preview') {
+    schedulePreviewRender(true)
+  }
+})
+
 onBeforeUnmount(() => {
   clearAiPolling()
+  if (previewRenderTimer !== null) {
+    window.clearTimeout(previewRenderTimer)
+    previewRenderTimer = null
+  }
   window.removeEventListener('admin-profile-updated', handleAdminProfileUpdated)
   window.removeEventListener('storage', handleStorage)
 })

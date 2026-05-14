@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Optional
 from datetime import datetime
 import markdown
@@ -32,15 +33,18 @@ async def check_guestbook_rate_limit(guest_token: str, redis: Redis) -> bool:
 
 
 async def render_markdown_content(content: str) -> str:
-    md = markdown.Markdown(
-        extensions=[
-            'extra',
-            'codehilite',
-            'nl2br',
-            'sane_lists',
-        ]
-    )
-    return md.convert(content)
+    def _render() -> str:
+        md = markdown.Markdown(
+            extensions=[
+                'extra',
+                'codehilite',
+                'nl2br',
+                'sane_lists',
+            ]
+        )
+        return md.convert(content)
+
+    return await asyncio.to_thread(_render)
 
 
 async def resolve_message_guest_identity(guest: GuestIdentity, admin: Optional[AdminUser]) -> GuestIdentity:

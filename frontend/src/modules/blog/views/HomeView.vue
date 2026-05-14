@@ -3,7 +3,7 @@
     <SiteNavbar />
 
     <!-- ============================================================
-         Hero — 杂志大字头部
+         Hero
          ============================================================ -->
     <section class="relative overflow-hidden">
       <div aria-hidden="true" class="hero-orb size-[420px] -top-32 -left-24 bg-[var(--brand)]/30"></div>
@@ -14,17 +14,17 @@
           <div class="max-w-3xl animate-fade-in-up">
             <div class="eyebrow mb-5">
               <span>{{ today }}</span>
-              <span class="opacity-60">·</span>
+              <span class="opacity-60">&middot;</span>
               <span>Personal Journal</span>
             </div>
 
             <h1 class="hero-headline text-[clamp(2.5rem,7vw,5.5rem)] text-[var(--text)]">
-              <span class="block">书写代码，</span>
-              <span class="block text-gradient-brand">记录想法。</span>
+              <span class="block">{{ '\u4e66\u5199\u4ee3\u7801\uff0c' }}</span>
+              <span class="block text-gradient-brand">{{ '\u8bb0\u5f55\u60f3\u6cd5\u3002' }}</span>
             </h1>
 
             <p class="mt-6 max-w-xl text-base sm:text-lg leading-relaxed text-[var(--text-soft)]">
-              {{ siteStore.config.site_description || '记录技术、生活与思考，专注 Web 开发、AI 应用与开源探索。' }}
+              {{ siteStore.config.site_description || '\u8bb0\u5f55\u6280\u672f\u3001\u751f\u6d3b\u4e0e\u601d\u8003\uff0c\u4e13\u6ce8 Web \u5f00\u53d1\u3001AI \u5e94\u7528\u4e0e\u5f00\u6e90\u63a2\u7d22\u3002' }}
             </p>
 
             <div class="mt-8 flex flex-wrap items-center gap-3">
@@ -33,13 +33,13 @@
                 @click="scrollToArticles"
               >
                 <BookOpen class="size-4" />
-                浏览文章
+                {{ '\u6d4f\u89c8\u6587\u7ae0' }}
                 <ArrowRight class="size-4" />
               </button>
             </div>
           </div>
 
-          <!-- 右侧：浮动卡片预览 -->
+          <!-- Preview Cards -->
           <div class="relative hidden lg:block w-[340px] xl:w-[380px]">
             <div class="absolute -inset-6 bg-gradient-to-br from-[var(--brand)]/20 to-[var(--accent)]/20 blur-2xl rounded-full"></div>
             <div class="relative grid gap-4 animate-float">
@@ -48,14 +48,14 @@
                   <span class="inline-flex items-center gap-1">
                     <Sparkles class="size-3 text-[var(--brand)]" /> Latest
                   </span>
-                  <span>·</span>
+                  <span>&middot;</span>
                   <span>{{ stats.total }} articles</span>
                 </div>
                 <p class="text-[15px] font-semibold leading-snug text-[var(--text)] line-clamp-2">
-                  {{ latestArticles[0]?.title || '欢迎来到我的博客' }}
+                  {{ latestArticles[0]?.title || '\u6b22\u8fce\u6765\u5230\u6211\u7684\u535a\u5ba2' }}
                 </p>
                 <p class="mt-1.5 text-xs text-[var(--text-muted)] line-clamp-2">
-                  {{ latestArticles[0]?.summary || '在这里我会分享技术、生活与一些不太成熟的想法。' }}
+                  {{ latestArticles[0]?.summary || '\u5728\u8fd9\u91cc\u6211\u4f1a\u5206\u4eab\u6280\u672f\u3001\u751f\u6d3b\u4e0e\u4e00\u4e9b\u4e0d\u592a\u6210\u719f\u7684\u60f3\u6cd5\u3002' }}
                 </p>
               </div>
 
@@ -71,13 +71,13 @@
                   >
                     #{{ tag.name }}
                   </span>
-                  <span v-if="!tags.length" class="text-[11px] text-[var(--text-muted)]">暂无标签</span>
+                  <span v-if="!tags.length" class="text-[11px] text-[var(--text-muted)]">{{ '\u6682\u65e0\u6807\u7b7e' }}</span>
                 </div>
               </div>
 
               <div class="relative rounded-2xl border border-[var(--border)] bg-gradient-to-br from-[var(--brand)] to-[var(--accent)] p-5 text-white shadow-[var(--shadow-lg)] -rotate-1 mr-4">
                 <div class="flex items-center gap-2 text-[11px] opacity-90 mb-2">
-                  <CloudSun class="size-3" /> Now in {{ weather.city || '深圳' }}
+                  <CloudSun class="size-3" /> Now in {{ weather.city || '\u6df1\u5733' }}
                 </div>
                 <div v-if="weatherLoading" class="space-y-2">
                   <div class="h-5 w-24 rounded bg-white/30 animate-pulse-soft"></div>
@@ -86,7 +86,7 @@
                 <template v-else>
                   <p class="text-2xl font-bold leading-tight">{{ weather.temperatureText }}</p>
                   <p class="text-[12px] opacity-90 mt-1">
-                    {{ weather.description }} · 体感 {{ weather.feelsLikeText }}
+                    {{ weather.description }} &middot; {{ '\u4f53\u611f' }} {{ weather.feelsLikeText }}
                   </p>
                 </template>
               </div>
@@ -94,22 +94,22 @@
           </div>
         </div>
 
-        <!-- 数据条（极简） -->
+        <!-- Stats -->
         <div class="mt-14 sm:mt-20 grid grid-cols-2 sm:grid-cols-4 gap-px overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--border)]">
           <div class="bg-[var(--surface)]/80 backdrop-blur p-5 sm:p-6">
-            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">文章</p>
+            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">{{ '\u6587\u7ae0' }}</p>
             <p class="mt-2 font-display text-3xl font-bold text-[var(--text)] tabular-nums">{{ stats.total }}</p>
           </div>
           <div class="bg-[var(--surface)]/80 backdrop-blur p-5 sm:p-6">
-            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">分类</p>
+            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">{{ '\u5206\u7c7b' }}</p>
             <p class="mt-2 font-display text-3xl font-bold text-[var(--text)] tabular-nums">{{ categories.length }}</p>
           </div>
           <div class="bg-[var(--surface)]/80 backdrop-blur p-5 sm:p-6">
-            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">标签</p>
+            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">{{ '\u6807\u7b7e' }}</p>
             <p class="mt-2 font-display text-3xl font-bold text-[var(--text)] tabular-nums">{{ tags.length }}</p>
           </div>
           <div class="bg-[var(--surface)]/80 backdrop-blur p-5 sm:p-6">
-            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">阅读量</p>
+            <p class="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">{{ '\u9605\u8bfb\u91cf' }}</p>
             <p class="mt-2 font-display text-3xl font-bold text-[var(--text)] tabular-nums">{{ formatNumber(totalViews) }}</p>
           </div>
         </div>
@@ -117,14 +117,14 @@
     </section>
 
     <!-- ============================================================
-         Featured：精选文章
+         Featured
          ============================================================ -->
     <section v-if="featuredTotal > 0" class="container-page py-10 sm:py-14">
       <div class="mb-6 flex items-end justify-between">
         <div>
           <p class="eyebrow">Editor's Pick</p>
           <h2 class="mt-2 font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text)]">
-            精选阅读
+            {{ '\u7cbe\u9009\u9605\u8bfb' }}
           </h2>
         </div>
       </div>
@@ -140,29 +140,29 @@
     </section>
 
     <!-- ============================================================
-         主体：文章列表 + 侧栏
+         Main Content
          ============================================================ -->
     <main ref="articlesAnchor" class="container-page flex-1 pb-20">
       <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-10 lg:gap-14">
-        <!-- 文章列表 -->
+        <!-- Articles -->
         <section>
           <header class="mb-7 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between border-b border-[var(--border)] pb-5">
             <div>
               <p class="eyebrow">Latest</p>
               <h2 class="mt-2 font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text)]">
-                最新文章
+                {{ '\u6700\u65b0\u6587\u7ae0' }}
               </h2>
               <p class="mt-1 text-sm text-[var(--text-muted)] tabular-nums">
-                共 {{ total }} 篇 · 第 {{ currentPage }} / {{ Math.max(1, Math.ceil(total / pageSize)) }} 页
+                {{ '\u5171' }} {{ total }} {{ '\u7bc7' }} &middot; {{ '\u7b2c' }} {{ currentPage }} / {{ Math.max(1, Math.ceil(total / pageSize)) }} {{ '\u9875' }}
               </p>
             </div>
           </header>
 
-          <div v-if="loading" class="grid gap-6 sm:grid-cols-2">
-            <USkeleton v-for="i in 4" :key="i" class="h-72 rounded-2xl" />
+          <div v-if="loading" class="article-list-grid">
+            <USkeleton v-for="i in 4" :key="i" class="h-[440px] rounded-2xl" />
           </div>
 
-          <div v-else-if="articles.length > 0" class="grid gap-6 sm:grid-cols-2">
+          <div v-else-if="articles.length > 0" class="article-list-grid">
             <ArticleCard
               v-for="article in articles"
               :key="article.id"
@@ -170,8 +170,8 @@
             />
           </div>
 
-          <UEmpty v-else description="暂无文章">
-            <p class="text-xs text-[var(--text-muted)]">先在管理后台创建一篇文章吧</p>
+          <UEmpty v-else :description="'\u6682\u65e0\u6587\u7ae0'">
+            <p class="text-xs text-[var(--text-muted)]">{{ '\u5148\u5728\u7ba1\u7406\u540e\u53f0\u521b\u5efa\u4e00\u7bc7\u6587\u7ae0\u5427' }}</p>
           </UEmpty>
 
           <div v-if="!loading && articles.length > 0 && total > pageSize" class="mt-10 flex justify-center">
@@ -184,9 +184,9 @@
           </div>
         </section>
 
-        <!-- 侧栏 -->
+        <!-- Sidebar -->
         <aside class="space-y-7 lg:sticky lg:top-24 self-start">
-          <!-- 分类 -->
+          <!-- Categories -->
           <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-sm)]">
             <div class="flex items-center justify-between mb-4">
               <p class="eyebrow text-xs">Categories</p>
@@ -205,11 +205,11 @@
                 </span>
                 <span class="text-sm text-[var(--text-muted)] tabular-nums">{{ cat.article_count }}</span>
               </router-link>
-              <p v-if="categories.length === 0" class="px-4 py-3 text-sm text-[var(--text-muted)]">暂无分类</p>
+              <p v-if="categories.length === 0" class="px-4 py-3 text-sm text-[var(--text-muted)]">{{ '\u6682\u65e0\u5206\u7c7b' }}</p>
             </div>
           </div>
 
-          <!-- 标签云 -->
+          <!-- Tags -->
           <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-sm)]">
             <div class="flex items-center justify-between mb-4">
               <p class="eyebrow text-xs">Tags</p>
@@ -224,7 +224,7 @@
               >
                 #{{ tag.name }}
               </router-link>
-              <p v-if="tags.length === 0" class="text-sm text-[var(--text-muted)]">暂无标签</p>
+              <p v-if="tags.length === 0" class="text-sm text-[var(--text-muted)]">{{ '\u6682\u65e0\u6807\u7b7e' }}</p>
             </div>
           </div>
 
@@ -237,7 +237,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, useTemplateRef } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, useTemplateRef } from 'vue'
 import {
   getArticles,
   getArticleStatsSummary,
@@ -277,12 +277,13 @@ const totalViews = ref(0)
 const loading = ref(false)
 const weatherLoading = ref(false)
 const weather = ref({
-  city: '深圳市',
-  description: '获取天气中',
+  city: '\u6df1\u5733\u5e02',
+  description: '\u83b7\u53d6\u5929\u6c14\u4e2d',
   temperatureText: '--',
   feelsLikeText: '--',
   humidityText: '--',
 })
+let weatherDelayTimer: number | null = null
 
 const stats = computed(() => ({ total: total.value }))
 
@@ -298,7 +299,7 @@ const formatNumber = (n: number) => {
   return n.toLocaleString('zh-CN')
 }
 
-const fetchArticles = async () => {
+const fetchArticles = async (syncLatestPreview = false) => {
   try {
     loading.value = true
     const res = await getArticles({
@@ -307,23 +308,17 @@ const fetchArticles = async () => {
       is_published: true,
     })
     const data = res.data?.data ?? { items: [], total: 0 }
-    articles.value = data.items ?? []
+    const items = data.items ?? []
+    articles.value = items
     total.value = data.total ?? 0
+    if (syncLatestPreview && currentPage.value === 1) {
+      latestArticles.value = items.slice(0, 5)
+    }
   } catch (e) {
     console.error(e)
-    toast.error('获取文章列表失败')
+    toast.error('\u83b7\u53d6\u6587\u7ae0\u5217\u8868\u5931\u8d25')
   } finally {
     loading.value = false
-  }
-}
-
-const fetchLatestArticles = async () => {
-  try {
-    const res = await getArticles({ page: 1, page_size: 5, is_published: true })
-    const items = res.data?.data?.items ?? []
-    latestArticles.value = items
-  } catch (e) {
-    console.warn('获取最新文章失败', e)
   }
 }
 
@@ -340,7 +335,7 @@ const fetchFeaturedArticle = async () => {
     featuredArticle.value = items[0] || null
     featuredTotal.value = data.total ?? 0
   } catch (e) {
-    console.warn('获取精选文章失败', e)
+    console.warn('\u83b7\u53d6\u7cbe\u9009\u6587\u7ae0\u5931\u8d25', e)
     featuredArticle.value = null
     featuredTotal.value = 0
   }
@@ -356,7 +351,7 @@ const fetchCategoriesAndTags = async () => {
     categories.value = catRes.data?.data ?? []
     tags.value = tagRes.data?.data ?? []
   } catch (e) {
-    console.warn('获取分类/标签失败', e)
+    console.warn('\u83b7\u53d6\u5206\u7c7b/\u6807\u7b7e\u5931\u8d25', e)
   }
 }
 
@@ -365,7 +360,7 @@ const fetchTotalViews = async () => {
     const res = await getArticleStatsSummary()
     totalViews.value = res.data?.data?.total_views ?? totalViews.value
   } catch (e) {
-    console.warn('获取阅读量统计失败', e)
+    console.warn('\u83b7\u53d6\u9605\u8bfb\u91cf\u7edf\u8ba1\u5931\u8d25', e)
   }
 }
 
@@ -384,25 +379,44 @@ const fetchWeather = async () => {
     const res = await getWeather({ city: '440300' })
     const data = res.data?.data
     weather.value = {
-      city: data?.city || '未知城市',
-      description: data?.description || '未知天气',
-      temperatureText: typeof data?.temperature === 'number' ? `${Math.round(data.temperature)}°C` : '--',
-      feelsLikeText: typeof data?.feels_like === 'number' ? `${Math.round(data.feels_like)}°C` : '--',
+      city: data?.city || '\u672a\u77e5\u57ce\u5e02',
+      description: data?.description || '\u672a\u77e5\u5929\u6c14',
+      temperatureText: typeof data?.temperature === 'number' ? `${Math.round(data.temperature)}\u00b0C` : '--',
+      feelsLikeText: typeof data?.feels_like === 'number' ? `${Math.round(data.feels_like)}\u00b0C` : '--',
       humidityText: typeof data?.humidity === 'number' ? `${data.humidity}%` : '--',
     }
   } catch (e) {
-    console.warn('获取天气失败', e)
+    console.warn('\u83b7\u53d6\u5929\u6c14\u5931\u8d25', e)
   } finally {
     weatherLoading.value = false
   }
 }
 
-onMounted(() => {
-  fetchArticles()
-  fetchTotalViews()
-  fetchLatestArticles()
-  fetchFeaturedArticle()
-  fetchCategoriesAndTags()
-  fetchWeather()
+const scheduleWeatherFetch = () => {
+  if (weatherDelayTimer !== null) {
+    window.clearTimeout(weatherDelayTimer)
+  }
+  // ??????????????????????
+  weatherDelayTimer = window.setTimeout(() => {
+    weatherDelayTimer = null
+    void fetchWeather()
+  }, 500)
+}
+
+onMounted(async () => {
+  await Promise.all([
+    fetchArticles(true),
+    fetchTotalViews(),
+    fetchFeaturedArticle(),
+    fetchCategoriesAndTags(),
+  ])
+  scheduleWeatherFetch()
+})
+
+onBeforeUnmount(() => {
+  if (weatherDelayTimer !== null) {
+    window.clearTimeout(weatherDelayTimer)
+    weatherDelayTimer = null
+  }
 })
 </script>

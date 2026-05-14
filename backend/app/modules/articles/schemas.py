@@ -95,7 +95,9 @@ class ArticleOut(BaseModel):
     status: str
     category: Optional[CategoryOut]
     tags: List[TagOut]
-    cover_image: Optional[str]
+    cover_image: Optional[str] = None
+    cover_image_thumb: Optional[str] = None
+    cover_image_large: Optional[str] = None
     view_count: int
     is_featured: bool
     allow_comment: bool
@@ -117,7 +119,8 @@ class ArticleListItem(BaseModel):
     status: str
     category: Optional[CategoryOut]
     tags: List[TagOut]
-    cover_image: Optional[str]
+    # 列表只返回缩略图（约 10-30KB），节省带宽，前端卡片直接渲染。
+    cover_image_thumb: Optional[str] = None
     view_count: int
     is_featured: bool
     published_at: Optional[datetime]

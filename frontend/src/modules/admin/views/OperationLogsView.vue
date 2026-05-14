@@ -78,14 +78,14 @@
       </div>
       <div v-if="total > pageSize" class="p-4 border-t border-[var(--border)] flex justify-end">
         <UPagination :current="page" :total="total" :page-size="pageSize"
-          @update:current="page = $event; fetchLogs()" />
+          @update:current="handlePageChange" />
       </div>
     </UCard>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
 import { getOperationLogs, type OperationLog } from '@/api/system'
 import { UCard, UInput, USelect, UButton, UTag, UEmpty, USpinner, UPagination, toast } from '@/ui'
@@ -95,6 +95,9 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const loading = ref(false)
+let logSearchDebounceTimer: number | null = null
+let logsAbortController: AbortController | null = null
+let logsFetchSerial = 0
 
 const filters = reactive({
   operator: '',
@@ -128,8 +131,12 @@ const formatDate = (s: string) => {
   return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 
-const fetchLogs = async () => {
-  loading.value = true
+const fetchLogs = async (options?: { silent?: boolean }) => {
+  const silent = options?.silent === true
+  const currentSerial = ++logsFetchSerial
+  logsAbortController?.abort()
+  logsAbortController = new AbortController()
+  if (!silent) loading.value = true
   try {
     const res = await getOperationLogs({
       page: page.value,
@@ -138,18 +145,33 @@ const fetchLogs = async () => {
       action: filters.action || undefined,
       start_date: filters.start_date || undefined,
       end_date: filters.end_date || undefined,
-    })
+    }, logsAbortController.signal)
+    if (currentSerial !== logsFetchSerial) return
     const data = res.data?.data ?? { items: [], total: 0 }
     logs.value = data.items || []
     total.value = data.total || 0
-  } catch {
+  } catch (error: any) {
+    if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return
     toast.error('获取日志失败')
   } finally {
-    loading.value = false
+    if (currentSerial === logsFetchSerial) loading.value = false
   }
 }
 
 const onSearch = () => { page.value = 1; fetchLogs() }
+const scheduleSearch = () => {
+  if (logSearchDebounceTimer !== null) {
+    window.clearTimeout(logSearchDebounceTimer)
+  }
+  logSearchDebounceTimer = window.setTimeout(() => {
+    logSearchDebounceTimer = null
+    onSearch()
+  }, 260)
+}
+const handlePageChange = (value: number) => {
+  page.value = value
+  fetchLogs()
+}
 const reset = () => {
   filters.operator = ''
   filters.action = ''
@@ -159,4 +181,22 @@ const reset = () => {
 }
 
 onMounted(fetchLogs)
+
+watch(() => filters.operator, (next, prev) => {
+  if (next === prev) return
+  scheduleSearch()
+})
+
+watch(() => filters.action, (next, prev) => {
+  if (next === prev) return
+  scheduleSearch()
+})
+
+onBeforeUnmount(() => {
+  logsAbortController?.abort()
+  if (logSearchDebounceTimer !== null) {
+    window.clearTimeout(logSearchDebounceTimer)
+    logSearchDebounceTimer = null
+  }
+})
 </script>

@@ -88,9 +88,10 @@ export const getGuestIdentity = () => {
 }
 
 // 管理端：获取评论列表
-export const getAdminComments = (params: CommentListParams) => {
+export const getAdminComments = (params: CommentListParams, signal?: AbortSignal) => {
   return request.get<{ data: CommentListResponse }>('/admin/comments', {
     params,
+    signal,
   }).then((response) => {
     response.data.data.items = response.data.data.items.map(normalizeComment)
     return response

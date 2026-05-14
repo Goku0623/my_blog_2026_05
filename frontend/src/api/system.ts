@@ -10,6 +10,7 @@ export interface SiteConfig {
   comment_enabled: boolean
   comment_audit_enabled: boolean
   ai_enabled: boolean
+  cover_image_max_size_mb?: number
 }
 
 export interface SystemConfigItem {
@@ -96,8 +97,8 @@ export const refreshSensitiveWordsCache = () => {
 }
 
 // 管理端：获取操作日志
-export const getOperationLogs = (params: LogListParams) => {
-  return request.get<{ data: LogListResponse }>('/admin/system/logs', { params })
+export const getOperationLogs = (params: LogListParams, signal?: AbortSignal) => {
+  return request.get<{ data: LogListResponse }>('/admin/system/logs', { params, signal })
 }
 
 // 管理端：获取定时任务列表

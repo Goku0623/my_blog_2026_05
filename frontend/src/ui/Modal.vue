@@ -7,7 +7,10 @@
         @mousedown.self="onMaskClick"
       >
         <div
-          class="absolute inset-0 bg-[var(--ink-950)]/40 backdrop-blur-sm"
+          :class="[
+            'absolute inset-0 bg-[var(--ink-950)]/40',
+            backdropBlur ? 'backdrop-blur-sm' : '',
+          ]"
           aria-hidden="true"
         ></div>
         <div
@@ -55,12 +58,14 @@ interface Props {
   width?: 'sm' | 'md' | 'lg' | 'xl'
   closable?: boolean
   closeOnMask?: boolean
+  backdropBlur?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   width: 'md',
   closable: true,
   closeOnMask: true,
+  backdropBlur: true,
 })
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()

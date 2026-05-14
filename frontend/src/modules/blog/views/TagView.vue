@@ -28,11 +28,11 @@
     </section>
 
     <main class="flex-1 container-page pb-20">
-      <div v-if="loading" class="grid gap-6 sm:grid-cols-2">
-        <USkeleton v-for="i in 4" :key="i" class="h-72 rounded-2xl" />
+      <div v-if="loading" class="article-list-grid">
+        <USkeleton v-for="i in 4" :key="i" class="h-[440px] rounded-2xl" />
       </div>
       <UEmpty v-else-if="!articles.length" title="该标签下暂无文章" class="py-20" />
-      <div v-else class="grid gap-6 sm:grid-cols-2">
+      <div v-else class="article-list-grid">
         <ArticleCard v-for="a in articles" :key="a.id" :article="a" />
       </div>
 
@@ -64,11 +64,46 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 const loading = ref(false)
+const TAG_CACHE_KEY = 'blog_tags_cache_v1'
+const TAG_CACHE_TTL_MS = 10 * 60 * 1000
+
+interface TagCachePayload {
+  timestamp: number
+  items: Tag[]
+}
+
+const readTagCache = (): Tag[] | null => {
+  try {
+    const raw = sessionStorage.getItem(TAG_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as TagCachePayload
+    if (!parsed || typeof parsed.timestamp !== 'number' || !Array.isArray(parsed.items)) return null
+    if (Date.now() - parsed.timestamp > TAG_CACHE_TTL_MS) return null
+    return parsed.items
+  } catch {
+    return null
+  }
+}
+
+const writeTagCache = (items: Tag[]) => {
+  try {
+    const payload: TagCachePayload = { timestamp: Date.now(), items }
+    sessionStorage.setItem(TAG_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore cache write failure
+  }
+}
 
 const fetchTag = async () => {
+  const cached = readTagCache()
+  if (cached) {
+    tag.value = cached.find((t) => t.id === tagId.value) || null
+    if (tag.value) return
+  }
   try {
     const res = await getTags()
     const list = res.data?.data ?? []
+    writeTagCache(list)
     tag.value = list.find((t) => t.id === tagId.value) || null
   } catch {
     /* silent */

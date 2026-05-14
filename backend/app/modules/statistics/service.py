@@ -72,13 +72,19 @@ class StatisticsService:
         
         today = date.today()
         
-        total_articles = await Article.all().count()
-        published_articles = await Article.filter(status=Article.STATUS_PUBLISHED).count()
-        draft_articles = await Article.filter(status=Article.STATUS_DRAFT).count()
-        
-        total_views = await ArticleView.all().count()
-        
-        total_comments = await Comment.all().count()
+        (
+            total_articles,
+            published_articles,
+            draft_articles,
+            total_views,
+            total_comments,
+        ) = await asyncio.gather(
+            Article.all().count(),
+            Article.filter(status=Article.STATUS_PUBLISHED).count(),
+            Article.filter(status=Article.STATUS_DRAFT).count(),
+            ArticleView.all().count(),
+            Comment.all().count(),
+        )
         
         daily_stat = await DailyStats.get_or_none(stat_date=today)
         if daily_stat:
@@ -88,8 +94,10 @@ class StatisticsService:
         else:
             today_start = datetime.combine(today, datetime.min.time())
             today_views = 0
-            today_comments = await Comment.filter(created_at__gte=today_start).count()
-            today_new_articles = await Article.filter(created_at__gte=today_start).count()
+            today_comments, today_new_articles = await asyncio.gather(
+                Comment.filter(created_at__gte=today_start).count(),
+                Article.filter(created_at__gte=today_start).count(),
+            )
         
         data = DashboardData(
             total_articles=total_articles,
