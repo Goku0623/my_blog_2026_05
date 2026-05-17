@@ -2,7 +2,6 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
-  // 前台路由
   {
     path: '/',
     name: 'Home',
@@ -46,7 +45,6 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '关于我' },
   },
 
-  // 管理后台路由
   {
     path: '/admin/login',
     name: 'AdminLogin',
@@ -82,6 +80,18 @@ const routes: RouteRecordRaw[] = [
         name: 'ArticleEdit',
         component: () => import('@/modules/admin/views/ArticleEditorView.vue'),
         meta: { title: '编辑文章', requiresAuth: true },
+      },
+      {
+        path: 'categories',
+        name: 'Categories',
+        component: () => import('@/modules/admin/views/CategoriesView.vue'),
+        meta: { title: '分类管理', requiresAuth: true },
+      },
+      {
+        path: 'tags',
+        name: 'Tags',
+        component: () => import('@/modules/admin/views/TagsView.vue'),
+        meta: { title: '标签管理', requiresAuth: true },
       },
       {
         path: 'comments',
@@ -122,7 +132,6 @@ const routes: RouteRecordRaw[] = [
     ],
   },
 
-  // 404 页面
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
@@ -143,13 +152,10 @@ const router = createRouter({
   },
 })
 
-// 全局路由守卫
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()
 
-  // 设置页面标题
   if (to.meta.title) {
-    // 首页单独设置，不添加后缀
     if (to.meta.standalone) {
       document.title = to.meta.title as string
     } else {
@@ -157,10 +163,21 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
-  // 需要登录的页面
+  if (to.name === 'AdminLogin' && authStore.isAuthenticated) {
+    try {
+      if (!authStore.adminInfo) {
+        await authStore.fetchAdminInfo()
+      }
+      next({ name: 'Dashboard' })
+    } catch (error) {
+      await authStore.logout(false)
+      next()
+    }
+    return
+  }
+
   if (to.meta.requiresAuth) {
     if (!authStore.isAuthenticated) {
-      // 未登录，跳转到登录页
       next({
         name: 'AdminLogin',
         query: { redirect: to.fullPath },
@@ -168,13 +185,11 @@ router.beforeEach(async (to, _from, next) => {
       return
     }
 
-    // 已登录但没有用户信息，先获取用户信息
     if (!authStore.adminInfo) {
       try {
         await authStore.fetchAdminInfo()
         next()
       } catch (error) {
-        // 获取用户信息失败，跳转到登录页
         await authStore.logout(false)
         next({
           name: 'AdminLogin',
@@ -183,12 +198,6 @@ router.beforeEach(async (to, _from, next) => {
       }
       return
     }
-  }
-
-  // 已登录用户访问登录页，跳转到仪表盘
-  if (to.name === 'AdminLogin' && authStore.isAuthenticated) {
-    next({ name: 'Dashboard' })
-    return
   }
 
   next()

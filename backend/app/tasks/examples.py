@@ -11,10 +11,6 @@ from app.tasks.cache_tasks import (
     clear_expired_article_views,
     refresh_sensitive_words_cache,
 )
-from app.tasks.notification_tasks import (
-    send_new_comment_notification,
-    send_alert_email,
-)
 from app.tasks.ai_tasks import process_n8n_article
 from app.tasks.statistics_tasks import record_daily_snapshot
 
@@ -35,23 +31,6 @@ def example_cache_cleanup():
     ]
     print(f"已提交 {len(tasks)} 个清理任务")
     return tasks
-
-
-def example_send_notification(comment_id: int):
-    """发送评论通知"""
-    result = send_new_comment_notification.delay(comment_id)
-    print(f"通知任务已提交: {result.id}")
-    return result
-
-
-def example_send_alert():
-    """发送告警邮件"""
-    result = send_alert_email.delay(
-        subject="系统告警",
-        message="磁盘空间不足，当前使用率: 95%"
-    )
-    print(f"告警邮件已提交: {result.id}")
-    return result
 
 
 def example_process_article(article_id: int):
@@ -152,10 +131,7 @@ if __name__ == "__main__":
     print("\n2. 执行缓存清理")
     example_cache_cleanup()
     
-    print("\n3. 发送系统告警")
-    example_send_alert()
-    
-    print("\n4. 手动触发统计快照")
+    print("\n3. 手动触发统计快照")
     example_manual_snapshot()
     
     print("\n5. 并行执行多个清理任务")

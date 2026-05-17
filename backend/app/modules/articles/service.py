@@ -1,11 +1,13 @@
+import uuid
 import base64
 import binascii
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 import re
 import httpx
 import io
+from zoneinfo import ZoneInfo
 from PIL import Image, ImageOps, UnidentifiedImageError
 from tortoise.expressions import F
 from tortoise.functions import Sum
@@ -28,7 +30,11 @@ from app.modules.articles.schemas import (
 from app.modules.system.service import SiteConfigService
 from app.common.utils import generate_slug
 from app.common.exceptions import NotFoundException, BadRequestException
+from app.core.redis_client import get_redis_client
+import logging
 import math
+
+logger = logging.getLogger(__name__)
 
 
 class CategoryService:
@@ -135,6 +141,7 @@ class TagService:
 
 
 class ArticleService:
+    APP_TIMEZONE = ZoneInfo("Asia/Shanghai")
     DEFAULT_MAX_COVER_IMAGE_MB = 2
     MAX_ALLOWED_COVER_IMAGE_MB = 20
     HTTP_IMAGE_TIMEOUT_SECONDS = 15
@@ -145,14 +152,77 @@ class ArticleService:
     _ENCODE_QUALITIES = (88, 80, 72, 64, 56, 48, 40)
     CONTENT_IMAGE_MAX_COUNT = 20
 
+    @staticmethod
+    def _to_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value
+        # 统一按业务时区（Asia/Shanghai）入库为 naive，避免管理端与定时任务出现 8 小时偏移。
+        return value.astimezone(ArticleService.APP_TIMEZONE).replace(tzinfo=None)
+
+    @staticmethod
+    def _utcnow_naive() -> datetime:
+        # 统一使用业务时区（Asia/Shanghai）naive 时间，避免不同进程系统时区导致发布时间排序错乱。
+        return datetime.now(ArticleService.APP_TIMEZONE).replace(tzinfo=None)
+
+    @staticmethod
+    def _to_app_tz_aware(value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            # 兼容管理端 datetime-local 与历史无时区入参，按业务时区解释。
+            return value.replace(tzinfo=ArticleService.APP_TIMEZONE)
+        return value.astimezone(ArticleService.APP_TIMEZONE)
+
+    @staticmethod
+    def _now_app_tz_aware() -> datetime:
+        return datetime.now(ArticleService.APP_TIMEZONE)
+
+    @staticmethod
+    def _normalize_scheduled_publish(update_data: dict, current_status: Optional[str] = None) -> None:
+        if "scheduled_publish_at" not in update_data:
+            return
+
+        scheduled = ArticleService._to_app_tz_aware(update_data.get("scheduled_publish_at"))
+        update_data["scheduled_publish_at"] = scheduled
+
+        # 发布后不应保留定时计划，避免重复触发。
+        if update_data.get("status") == Article.STATUS_PUBLISHED:
+            update_data["scheduled_publish_at"] = None
+            return
+
+        status = update_data.get("status", current_status)
+        # 只有草稿允许设置定时发布时间。
+        if scheduled is not None and status != Article.STATUS_DRAFT:
+            raise BadRequestException("scheduled_publish_at can only be set for draft articles")
+
+        # 防止写入已过期的计划时间。
+        if scheduled is not None and scheduled <= ArticleService._now_app_tz_aware():
+            raise BadRequestException("scheduled_publish_at must be in the future")
+
     # 16:9 固定尺寸缩略图，用于列表卡片与详情大图。
     COVER_THUMB_SIZE = (400, 225)
     COVER_LARGE_SIZE = (1600, 900)
     COVER_THUMB_QUALITY = 80
     COVER_LARGE_QUALITY = 85
     _MARKDOWN_IMAGE_URL_RE = re.compile(
-        r"!\[[^\]]*]\((?P<url>https?://[^)\s]+)\)",
+        r"!\[[^\]]*]\(\s*(?:<)?(?P<url>https?://[^\s>)]+)(?:>)?(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]+\)))?\s*\)",
         flags=re.IGNORECASE,
+    )
+    _IMAGE_URL_HINT_RE = (
+        r"https?://[^\s)]+?(?:"
+        r"\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s)]*)?"
+        r"|[?&](?:format|fmt|fm|f)=(?:png|jpe?g|gif|webp|bmp|svg)\b[^\s)]*"
+        r")"
+    )
+    _MARKDOWN_LINK_IMAGE_URL_RE = re.compile(
+        rf"(?<!!)\[(?P<text>[^\]]+)\]\((?P<url>{_IMAGE_URL_HINT_RE})\)",
+        flags=re.IGNORECASE,
+    )
+    _PLAIN_IMAGE_URL_LINE_RE = re.compile(
+        rf"^(?P<indent>\s*)(?P<url>{_IMAGE_URL_HINT_RE})\s*$",
+        flags=re.IGNORECASE | re.MULTILINE,
     )
     _HTML_IMAGE_URL_RE = re.compile(
         r'(<img\b[^>]*?\bsrc=["\'])(?P<url>https?://[^"\']+)(["\'][^>]*>)',
@@ -249,12 +319,16 @@ class ArticleService:
 
         markdown_matches = list(ArticleService._MARKDOWN_IMAGE_URL_RE.finditer(content))
         html_matches = list(ArticleService._HTML_IMAGE_URL_RE.finditer(content))
-        if not markdown_matches and not html_matches:
+        markdown_link_matches = list(ArticleService._MARKDOWN_LINK_IMAGE_URL_RE.finditer(content))
+        plain_line_matches = list(ArticleService._PLAIN_IMAGE_URL_LINE_RE.finditer(content))
+        if not markdown_matches and not html_matches and not markdown_link_matches and not plain_line_matches:
             return content
 
         image_urls: list[str] = []
         image_urls.extend(match.group("url") for match in markdown_matches)
         image_urls.extend(match.group("url") for match in html_matches)
+        image_urls.extend(match.group("url") for match in markdown_link_matches)
+        image_urls.extend(match.group("url") for match in plain_line_matches)
         unique_urls = list(dict.fromkeys(image_urls))
         if len(unique_urls) > ArticleService.CONTENT_IMAGE_MAX_COUNT:
             raise BadRequestException(
@@ -272,6 +346,14 @@ class ArticleService:
         )
         normalized_content = ArticleService._HTML_IMAGE_URL_RE.sub(
             lambda match: f'{match.group(1)}{normalized_urls.get(match.group("url"), match.group("url"))}{match.group(3)}',
+            normalized_content,
+        )
+        normalized_content = ArticleService._MARKDOWN_LINK_IMAGE_URL_RE.sub(
+            lambda match: f'![{match.group("text")}]({normalized_urls.get(match.group("url"), match.group("url"))})',
+            normalized_content,
+        )
+        normalized_content = ArticleService._PLAIN_IMAGE_URL_LINE_RE.sub(
+            lambda match: f'{match.group("indent")}![image]({normalized_urls.get(match.group("url"), match.group("url"))})',
             normalized_content,
         )
         return normalized_content
@@ -535,11 +617,13 @@ class ArticleService:
                 seo_title=data.seo_title if data.seo_title is not None else source_article.seo_title,
                 seo_description=data.seo_description if data.seo_description is not None else source_article.seo_description,
                 seo_keywords=data.seo_keywords if data.seo_keywords is not None else source_article.seo_keywords,
+                scheduled_publish_at=ArticleService._to_app_tz_aware(data.scheduled_publish_at),
                 **cover_fields_for_create,
             )
             await ArticleDraftLink.create(source_article_id=source_article_id, draft_article_id=draft_article.id)
         else:
             update_data = data.model_dump(exclude_unset=True, exclude={"tag_ids"})
+            ArticleService._normalize_scheduled_publish(update_data, current_status=draft_article.status)
             if "cover_image" in update_data:
                 cover_fields = await ArticleService._build_cover_update_dict(update_data["cover_image"])
                 update_data.update(cover_fields)
@@ -578,7 +662,7 @@ class ArticleService:
         source_article.seo_keywords = draft_article.seo_keywords
         source_article.status = Article.STATUS_PUBLISHED
         if not source_article.published_at:
-            source_article.published_at = datetime.now()
+            source_article.published_at = ArticleService._utcnow_naive()
         await source_article.save()
 
         draft_tag_ids = await ArticleTag.filter(article_id=draft_article.id).values_list("tag_id", flat=True)
@@ -588,7 +672,48 @@ class ArticleService:
         await ArticleDraftLink.filter(id=link.id).delete()
         await draft_article.delete()
 
-        return await Article.get(id=source_article.id).prefetch_related("category", "article_tags__tag")
+        published_article = await Article.get(id=source_article.id).prefetch_related("category", "article_tags__tag")
+        asyncio.create_task(ArticleService._notify_n8n_blog_ingest(published_article, "update"))
+        return published_article
+
+    @staticmethod
+    async def _notify_n8n_blog_ingest(article: Article, action: str) -> None:
+        try:
+            configs = await SiteConfigService.get_configs_map([
+                "N8N_BLOG_INGEST_WEBHOOK_URL",
+                "N8N_SECRET",
+                "SITE_URL",
+            ])
+            webhook_url = (configs.get("N8N_BLOG_INGEST_WEBHOOK_URL") or "").strip()
+            if not webhook_url:
+                return
+
+            webhook_secret = (configs.get("N8N_SECRET") or "").strip()
+            site_url = (configs.get("SITE_URL") or "").strip().rstrip("/")
+
+            article_url = f"{site_url}/posts/{article.slug}" if site_url else f"/posts/{article.slug}"
+
+            published_date = ""
+            if article.published_at:
+                published_date = article.published_at.strftime("%Y-%m-%d")
+
+            payload = {
+                "action": action,
+                "article_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"article-{article.id}")),
+                "title": article.title,
+                "url": article_url,
+                "date": published_date,
+                "content": article.content,
+            }
+
+            headers = {"Content-Type": "application/json"}
+            if webhook_secret:
+                headers["X-N8N-Secret"] = webhook_secret
+
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.post(webhook_url, json=payload, headers=headers)
+        except Exception:
+            logger.exception("Failed to notify N8N blog ingest webhook for article %s (action=%s)", article.slug, action)
 
     @staticmethod
     async def create_article(data: ArticleCreate, admin_id: int) -> Article:
@@ -601,6 +726,9 @@ class ArticleService:
             counter += 1
         
         article_data = data.model_dump(exclude={"tag_ids"})
+        ArticleService._normalize_scheduled_publish(article_data, current_status=article_data.get("status"))
+        if article_data.get("status") == Article.STATUS_PUBLISHED and not article_data.get("published_at"):
+            article_data["published_at"] = ArticleService._utcnow_naive()
         article_data["slug"] = unique_slug
         cover_fields = await ArticleService._build_cover_update_dict(article_data.get("cover_image"))
         article_data.update(cover_fields)
@@ -611,6 +739,9 @@ class ArticleService:
         if data.tag_ids:
             await ArticleService._replace_article_tags(article.id, list(data.tag_ids))
         
+        if article.status == Article.STATUS_PUBLISHED:
+            asyncio.create_task(ArticleService._notify_n8n_blog_ingest(article, "create"))
+
         return await Article.get(id=article.id).prefetch_related("category", "article_tags__tag")
 
     @staticmethod
@@ -619,22 +750,52 @@ class ArticleService:
         if not article:
             raise NotFoundException("Article not found")
         
+        original_status = article.status
+        
         update_data = data.model_dump(exclude_unset=True, exclude={"tag_ids"})
+        ArticleService._normalize_scheduled_publish(update_data, current_status=article.status)
+        # 封面未变更时跳过重算缩略图，避免编辑页“更新发布”重复耗时。
+        if "cover_image" in update_data and update_data["cover_image"] == article.cover_image:
+            update_data.pop("cover_image")
         if "cover_image" in update_data:
             cover_fields = await ArticleService._build_cover_update_dict(update_data["cover_image"])
             update_data.update(cover_fields)
+
+        # 内容未变更时跳过正文图片归一化（该步骤可能触发远程拉图，最耗时）。
+        if "content" in update_data and update_data["content"] == article.content:
+            update_data.pop("content")
         if "content" in update_data:
             update_data["content"] = await ArticleService._normalize_content_images(update_data["content"])
+        if update_data.get("status") == Article.STATUS_PUBLISHED and not article.published_at:
+            update_data["published_at"] = ArticleService._utcnow_naive()
+
+        if "title" in update_data and update_data["title"] != article.title:
+            new_slug = generate_slug(update_data["title"])
+            counter = 1
+            unique_slug = new_slug
+            while await Article.filter(slug=unique_slug).exclude(id=article_id).exists():
+                unique_slug = f"{new_slug}-{counter}"
+                counter += 1
+            update_data["slug"] = unique_slug
 
         for key, value in update_data.items():
             setattr(article, key, value)
-        
-        await article.save()
-        
+
+        if update_data:
+            await article.save()
+
         if data.tag_ids is not None:
-            await ArticleService._replace_article_tags(article_id, list(data.tag_ids))
+            next_tag_ids = list(data.tag_ids)
+            current_tag_ids = await ArticleTag.filter(article_id=article_id).values_list("tag_id", flat=True)
+            if set(next_tag_ids) != set(current_tag_ids):
+                await ArticleService._replace_article_tags(article_id, next_tag_ids)
         
-        return await Article.get(id=article_id).prefetch_related("category", "article_tags__tag")
+        updated_article = await Article.get(id=article_id).prefetch_related("category", "article_tags__tag")
+        if updated_article.status == Article.STATUS_PUBLISHED:
+            was_published_before = original_status == Article.STATUS_PUBLISHED
+            action = "update" if was_published_before else "create"
+            asyncio.create_task(ArticleService._notify_n8n_blog_ingest(updated_article, action))
+        return updated_article
 
     @staticmethod
     async def publish_article(article_id: int) -> Article:
@@ -643,10 +804,13 @@ class ArticleService:
             raise NotFoundException("Article not found")
         
         article.status = Article.STATUS_PUBLISHED
+        article.scheduled_publish_at = None
         if not article.published_at:
-            article.published_at = datetime.now()
+            article.published_at = ArticleService._utcnow_naive()
         await article.save()
         
+        asyncio.create_task(ArticleService._notify_n8n_blog_ingest(article, "create"))
+
         return article
 
     @staticmethod
@@ -656,6 +820,7 @@ class ArticleService:
             raise NotFoundException("Article not found")
         
         article.status = Article.STATUS_UNPUBLISHED
+        article.scheduled_publish_at = None
         await article.save()
         
         return article
@@ -692,6 +857,7 @@ class ArticleService:
 
         await ArticleTag.filter(article_id=article_id).delete()
         await ArticleView.filter(article_id=article_id).delete()
+        asyncio.create_task(ArticleService._notify_n8n_blog_ingest(article, "delete"))
         await article.delete()
 
     @staticmethod
@@ -708,6 +874,11 @@ class ArticleService:
         query = Article.all()
         
         if not is_admin:
+            try:
+                await ArticleService.backfill_missing_published_at()
+            except Exception:
+                # 列表查询优先保证可用性，回填失败不阻断主接口。
+                pass
             query = query.filter(status=Article.STATUS_PUBLISHED)
         elif status_filter:
             query = query.filter(status=status_filter)
@@ -755,6 +926,14 @@ class ArticleService:
         }
 
     @staticmethod
+    async def backfill_missing_published_at() -> int:
+        """为历史已发布但 published_at 为空的数据补齐发布时间（回填 created_at）。"""
+        return await Article.filter(
+            status=Article.STATUS_PUBLISHED,
+            published_at__isnull=True,
+        ).update(published_at=F("created_at"))
+
+    @staticmethod
     async def get_article_by_slug(slug: str, is_admin: bool = False) -> Optional[Article]:
         query = Article.filter(slug=slug)
         
@@ -787,6 +966,11 @@ class ArticleService:
         search_in: str = "title_summary",
         time_filter: str = "all",
     ) -> Dict:
+        try:
+            await ArticleService.backfill_missing_published_at()
+        except Exception:
+            # 测试环境或 Redis/配置异常时，回填失败不影响搜索主流程。
+            pass
         query = Article.filter(status=Article.STATUS_PUBLISHED)
 
         keyword_query: Optional[Q] = None
@@ -801,7 +985,7 @@ class ArticleService:
 
         query = query.filter(keyword_query)
 
-        now = datetime.now()
+        now = ArticleService._utcnow_naive()
         if time_filter in {"7d", "30d", "90d", "365d"}:
             days = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}[time_filter]
             cutoff = now - timedelta(days=days)
@@ -831,3 +1015,39 @@ class ArticleService:
             "page_size": page_size,
             "total_pages": total_pages
         }
+
+    @staticmethod
+    async def publish_due_scheduled_articles(now: Optional[datetime] = None) -> int:
+        current_time = ArticleService._to_app_tz_aware(now) if now is not None else ArticleService._now_app_tz_aware()
+        scheduled_articles = await Article.filter(
+            status=Article.STATUS_DRAFT,
+            scheduled_publish_at__isnull=False,
+        ).all()
+
+        if not scheduled_articles:
+            return 0
+
+        due_articles: list[Article] = []
+        for item in scheduled_articles:
+            normalized_scheduled = ArticleService._to_app_tz_aware(item.scheduled_publish_at)
+            if normalized_scheduled is None:
+                continue
+            if normalized_scheduled <= current_time:
+                due_articles.append(item)
+
+        # 使用各自的计划发布时间作为 published_at，避免批量任务同一时刻触发时
+        # 所有文章发布时间完全相同，导致前台排序与展示时间不符合预期。
+        for item in due_articles:
+            item.status = Article.STATUS_PUBLISHED
+            item.published_at = ArticleService._to_app_tz_aware(item.scheduled_publish_at) or current_time
+            item.scheduled_publish_at = None
+
+        pending_saves = [item.save(update_fields=["status", "published_at", "scheduled_publish_at"]) for item in due_articles]
+        if pending_saves:
+            await asyncio.gather(*pending_saves)
+
+        notification_tasks = [ArticleService._notify_n8n_blog_ingest(item, "create") for item in due_articles]
+        if notification_tasks:
+            await asyncio.gather(*notification_tasks, return_exceptions=True)
+
+        return len(due_articles)

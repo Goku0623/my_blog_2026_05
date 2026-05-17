@@ -29,7 +29,7 @@
       </div>
 
       <div v-else class="flex gap-4 p-5 sm:p-6">
-        <UAvatar :name="currentDisplayName" :size="40" />
+        <UAvatar :name="currentDisplayName" :src="siteStore.config.admin_avatar || undefined" :size="40" />
 
         <div class="flex-1 min-w-0 space-y-3">
           <div class="flex items-center gap-2 text-sm">
@@ -137,6 +137,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { AxiosError } from 'axios'
 import { useGuestStore } from '@/stores/guest'
 import { useAuthStore } from '@/stores/auth'
+import { useSiteStore } from '@/stores/site'
 import { getComments, createComment, type Comment } from '@/api/comments'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { Send, Reply, MessageCircle } from 'lucide-vue-next'
@@ -147,6 +148,7 @@ const props = defineProps<{ articleId: number }>()
 
 const guestStore = useGuestStore()
 const authStore = useAuthStore()
+const siteStore = useSiteStore()
 const { render } = useMarkdown()
 
 const tabs: { id: 'edit' | 'preview'; label: string }[] = [
@@ -257,6 +259,13 @@ const initGuestSession = async () => {
   }
 }
 
+const getApiErrorMessage = (error: unknown, fallback: string) => {
+  const axiosError = error as AxiosError<{ message?: string; detail?: string }>
+  return axiosError.response?.data?.message
+    || axiosError.response?.data?.detail
+    || fallback
+}
+
 const submitComment = async () => {
   if (!commentForm.content.trim()) return
   try {
@@ -274,12 +283,11 @@ const submitComment = async () => {
     activeTab.value = 'edit'
     await fetchComments()
 
-    if (isTopLevelComment && typeof createdCommentId === 'number') {
+    if (isTopLevelComment && typeof createdCommentId === 'number' && siteStore.config.ai_enabled) {
       startAiPolling(createdCommentId)
     }
   } catch (error) {
-    const axiosError = error as AxiosError<{ message?: string }>
-    const errorMessage = axiosError.response?.data?.message || '评论内容不能包含违禁词，或请稍后重试'
+    const errorMessage = getApiErrorMessage(error, '评论内容不能包含违禁词，或请稍后重试')
     toast.error(errorMessage)
   } finally {
     submitting.value = false
@@ -337,7 +345,6 @@ onMounted(async () => {
   try {
     await guestStore.initGuest()
   } catch {
-    // 游客初始化失败不阻塞评论列表展示
   }
   await fetchComments()
   window.addEventListener('admin-profile-updated', handleAdminProfileUpdated)

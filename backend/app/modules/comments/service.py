@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from typing import List, Optional
 from datetime import datetime, timedelta
 import markdown
@@ -18,6 +19,69 @@ from app.modules.articles.models import Article
 from app.modules.system.models import OperationLog
 from app.modules.system.service import SensitiveWordService, FeatureSwitchService
 from app.modules.auth.models import AdminUser
+
+
+def build_visitor_fingerprint(ip: str, user_agent: str) -> str:
+    normalized_ip = (ip or "unknown").strip()
+    normalized_ua = (user_agent or "unknown").strip().lower()
+    raw = f"{normalized_ip}|{normalized_ua}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def _get_config_int(key: str, default: int) -> int:
+    from app.modules.system.models import SiteConfig
+    import os
+
+    config = await SiteConfig.get_or_none(key=key)
+    value = config.value if config and config.value not in (None, "") else os.getenv(key, str(default))
+    try:
+        return max(0, int(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+async def check_comment_daily_limits(
+    *,
+    redis: Redis,
+    guest: GuestIdentity,
+    article_id: int,
+) -> None:
+    per_user_limit = await _get_config_int("COMMENT_DAILY_LIMIT_PER_USER", 2)
+    per_article_limit = await _get_config_int("COMMENT_DAILY_LIMIT_PER_ARTICLE_PER_USER", 2)
+    if per_user_limit == 0 and per_article_limit == 0:
+        return
+
+    today = datetime.now().strftime("%Y%m%d")
+    ttl_seconds = 2 * 24 * 60 * 60
+    token_key_prefix = f"comment_daily:token:{guest.guest_token}:{today}"
+
+    keys_to_check: list[tuple[str, int]] = []
+    if per_user_limit > 0:
+        keys_to_check.append((f"{token_key_prefix}:all", per_user_limit))
+    if per_article_limit > 0:
+        keys_to_check.append((f"{token_key_prefix}:article:{article_id}", per_article_limit))
+
+    is_guest_user = not (guest.guest_token or "").startswith("admin-")
+    if is_guest_user:
+        fingerprint = build_visitor_fingerprint(guest.ip_address, guest.user_agent or "")
+        fp_key_prefix = f"comment_daily:fp:{fingerprint}:{today}"
+        if per_user_limit > 0:
+            keys_to_check.append((f"{fp_key_prefix}:all", per_user_limit))
+        if per_article_limit > 0:
+            keys_to_check.append((f"{fp_key_prefix}:article:{article_id}", per_article_limit))
+
+    for key, limit in keys_to_check:
+        current_raw = await redis.get(key)
+        current = int(current_raw) if current_raw is not None else 0
+        if current >= limit:
+            if key.endswith(":all"):
+                raise BusinessException(429, f"您每天至多评论{limit}条，明天再来吧")
+            raise BusinessException(429, f"您每天至多在本文评论{limit}条，请到其他文章看看吧")
+
+    for key, _ in keys_to_check:
+        new_count = await redis.incr(key)
+        if new_count == 1:
+            await redis.expire(key, ttl_seconds)
 
 
 def build_guest_display_name(guest: GuestIdentity) -> str:
@@ -41,6 +105,17 @@ async def resolve_guest_display_name(guest: GuestIdentity) -> str:
             if admin and admin.username:
                 return admin.username
     return build_guest_display_name(guest)
+
+
+async def resolve_guest_avatar(guest: GuestIdentity) -> Optional[str]:
+    token = guest.guest_token or ""
+    if token.startswith("admin-"):
+        admin_id_str = token.removeprefix("admin-")
+        if admin_id_str.isdigit():
+            admin = await AdminUser.get_or_none(id=int(admin_id_str))
+            if admin and admin.avatar:
+                return admin.avatar
+    return None
 
 
 async def get_or_create_guest(
@@ -80,7 +155,6 @@ async def check_guest_banned(guest: GuestIdentity):
 
 
 async def get_sensitive_words_from_cache(redis: Redis) -> List[str]:
-    # 复用系统模块的统一缓存 key，避免后台刷新后评论侧读到旧缓存。
     words = await SensitiveWordService.get_sensitive_words_cached()
     return list(words)
 
@@ -140,7 +214,6 @@ async def create_comment(
     await check_guest_banned(guest)
 
     if admin:
-        # 管理员发表评论统一绑定到 admin-{id} 身份，避免沿用旧游客昵称导致展示不一致。
         admin_guest_token = f"admin-{admin.id}"
         admin_guest = await GuestIdentity.get_or_none(guest_token=admin_guest_token)
 
@@ -159,14 +232,14 @@ async def create_comment(
                 user_agent=guest.user_agent or "system-admin-comment",
             )
         else:
-            # 复用管理员身份时更新最近来源信息，便于审计。
             admin_guest.ip_address = guest.ip_address
             admin_guest.user_agent = guest.user_agent
             await admin_guest.save()
 
         guest = admin_guest
     
-    await check_comment_rate_limit(guest.guest_token, redis)
+    if not admin:
+        await check_comment_rate_limit(guest.guest_token, redis)
     
     article = await Article.get_or_none(id=data.article_id)
     if not article:
@@ -174,8 +247,11 @@ async def create_comment(
     
     if not article.allow_comment:
         raise BadRequestException("该文章不允许评论")
-    
+
     await filter_sensitive_words(data.content, redis)
+
+    if not admin:
+        await check_comment_daily_limits(redis=redis, guest=guest, article_id=data.article_id)
     
     reply_to_nickname = None
     if data.parent_id:
@@ -204,7 +280,6 @@ async def create_comment(
     )
 
     if data.parent_id is None:
-        # 不阻塞用户评论请求：AI 自动回复改为后台异步执行。
         asyncio.create_task(_try_auto_ai_reply(comment.id, redis))
 
     return comment
@@ -265,7 +340,6 @@ async def _try_auto_ai_reply(comment_id: int, redis: Redis) -> None:
             ip_address="127.0.0.1",
         )
     except Exception:
-        # AI 自动回复失败不影响正常评论发布。
         return
 
 
@@ -379,8 +453,6 @@ async def admin_reply_comment(
     comment.admin_reply = content
     await comment.save()
 
-    # 将管理员回复落为真实评论，确保前台/管理端回复链可见。
-    # 统一挂到根评论下，避免出现前台不展示的多层嵌套。
     root_comment_id = comment.parent_id or comment.id
     target_guest = await comment.guest
 
@@ -428,11 +500,13 @@ async def admin_reply_comment(
 async def convert_comment_to_out(comment: Comment) -> CommentOut:
     guest = await comment.guest
     guest_display_name = await resolve_guest_display_name(guest)
-    
+    guest_avatar = await resolve_guest_avatar(guest)
+
     guest_out = GuestIdentityOut(
         id=guest.id,
         guest_token=guest.guest_token,
         nickname=guest_display_name,
+        avatar=guest_avatar,
         created_at=guest.created_at,
     )
     
@@ -445,10 +519,12 @@ async def convert_comment_to_out(comment: Comment) -> CommentOut:
     for reply in reply_items:
         reply_guest = await reply.guest
         reply_guest_display_name = await resolve_guest_display_name(reply_guest)
+        reply_guest_avatar = await resolve_guest_avatar(reply_guest)
         reply_guest_out = GuestIdentityOut(
             id=reply_guest.id,
             guest_token=reply_guest.guest_token,
             nickname=reply_guest_display_name,
+            avatar=reply_guest_avatar,
             created_at=reply_guest.created_at,
         )
         replies_out.append(

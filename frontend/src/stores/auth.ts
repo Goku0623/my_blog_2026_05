@@ -7,7 +7,6 @@ const REFRESH_TOKEN_KEY = 'admin_refresh_token'
 const ADMIN_INFO_KEY = 'admin_info'
 
 export const useAuthStore = defineStore('auth', () => {
-  // 状态
   const token = ref<string | null>(localStorage.getItem(TOKEN_KEY))
   const refreshToken = ref<string | null>(localStorage.getItem(REFRESH_TOKEN_KEY))
   const adminInfo = ref<AdminInfo | null>(
@@ -16,22 +15,18 @@ export const useAuthStore = defineStore('auth', () => {
       : null
   )
 
-  // 计算属性
   const isAuthenticated = computed(() => !!token.value)
 
-  // 登录
   const login = async (params: LoginParams) => {
     try {
       const response = await loginApi(params)
       const { access_token, refresh_token } = response.data.data
 
-      // 保存 token 到状态和 localStorage
       token.value = access_token
       refreshToken.value = refresh_token
       localStorage.setItem(TOKEN_KEY, access_token)
       localStorage.setItem(REFRESH_TOKEN_KEY, refresh_token)
 
-      // 获取管理员信息
       await fetchAdminInfo()
 
       return true
@@ -41,7 +36,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 获取管理员信息
   const fetchAdminInfo = async () => {
     try {
       const response = await getAdminInfo()
@@ -53,7 +47,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 更新 token（用于自动刷新）
   const updateTokens = (newToken: string, newRefreshToken: string) => {
     token.value = newToken
     refreshToken.value = newRefreshToken
@@ -61,7 +54,6 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken)
   }
 
-  // 登出
   const logout = async (callApi = true) => {
     try {
       if (callApi && token.value) {
@@ -70,7 +62,6 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (error) {
       console.error('登出失败:', error)
     } finally {
-      // 清空状态和 localStorage
       token.value = null
       refreshToken.value = null
       adminInfo.value = null
@@ -80,13 +71,11 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 初始化时检查 token 有效性
   const checkAuth = async () => {
     if (token.value && !adminInfo.value) {
       try {
         await fetchAdminInfo()
       } catch (error) {
-        // token 无效，清空状态
         await logout(false)
       }
     }

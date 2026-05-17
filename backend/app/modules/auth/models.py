@@ -7,6 +7,7 @@ class AdminUser(Model):
     username = fields.CharField(max_length=50, unique=True, index=True)
     email = fields.CharField(max_length=100, unique=True, null=True, index=True)
     hashed_password = fields.CharField(max_length=255)
+    avatar = fields.TextField(null=True)
     is_active = fields.BooleanField(default=True)
     last_login_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)

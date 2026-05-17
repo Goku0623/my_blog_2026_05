@@ -43,7 +43,7 @@
                 {{ article.category.name }}
               </span>
               <span class="inline-flex items-center gap-1.5">
-                <Calendar class="size-3" /> {{ formatFriendlyTime(article.created_at) }}
+                <Calendar class="size-3" /> {{ formatFriendlyTime(displayTime) }}
               </span>
               <span class="inline-flex items-center gap-1.5">
                 <Eye class="size-3" /> {{ formatNumber(article.view_count ?? 0) }}
@@ -91,7 +91,7 @@
         {{ article.title }}
       </h4>
       <p class="mt-1 text-[11px] text-[var(--text-muted)]">
-        {{ formatFriendlyTime(article.created_at) }}
+        {{ formatFriendlyTime(displayTime) }}
       </p>
     </div>
   </router-link>
@@ -154,7 +154,7 @@
     <div class="flex min-h-0 w-full min-w-0 flex-col gap-3 overflow-hidden p-5 sm:p-6">
       <div class="flex shrink-0 items-center gap-3 overflow-hidden whitespace-nowrap text-[11px] text-[var(--text-muted)] tabular-nums">
         <span class="inline-flex shrink-0 items-center gap-1">
-          <Calendar class="size-3" /> {{ formatFriendlyTime(article.created_at) }}
+          <Calendar class="size-3" /> {{ formatFriendlyTime(displayTime) }}
         </span>
         <span class="inline-flex shrink-0 items-center gap-1">
           <Eye class="size-3" /> {{ formatNumber(article.view_count ?? 0) }}
@@ -208,9 +208,8 @@ const props = withDefaults(defineProps<{
   variant: 'default',
 })
 
-// 优先使用后端生成的 16:9 缩略图（卡片体积小、构图统一），
-// 老数据没有缩略图时回退到原 cover_image，保证向后兼容。
 const coverThumb = computed(() => props.article.cover_image_thumb || props.article.cover_image || '')
+const displayTime = computed(() => props.article.published_at || props.article.created_at)
 
 const formatNumber = (n: number) => {
   if (n >= 10000) return `${(n / 10000).toFixed(1)}w`

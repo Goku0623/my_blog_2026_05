@@ -2,6 +2,25 @@ from tortoise import fields
 from tortoise.models import Model
 
 
+class AdminNotification(Model):
+    TYPE_COMMENT = "new_comment"
+    TYPE_GUESTBOOK = "new_guestbook_message"
+    TYPE_SYSTEM_ALERT = "system_alert"
+    TYPE_N8N_DRAFT = "n8n_draft"
+
+    id = fields.IntField(pk=True)
+    type = fields.CharField(max_length=50, index=True)
+    title = fields.CharField(max_length=200)
+    content = fields.TextField(null=True)
+    link = fields.CharField(max_length=500, null=True)
+    source_id = fields.IntField(null=True)
+    is_read = fields.BooleanField(default=False, index=True)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "admin_notifications"
+
+
 class SiteConfig(Model):
     TYPE_STR = "str"
     TYPE_INT = "int"

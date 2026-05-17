@@ -8,7 +8,6 @@ from app.modules.comments.models import GuestIdentity
 from app.modules.comments.schemas import (
     CommentCreate,
     CommentOut,
-    CommentListResponse,
     SetNicknameRequest,
     GuestIdentityOut,
     AdminCommentAction,
@@ -55,9 +54,13 @@ async def create_comment(
 ):
     comment = await service.create_comment(data, guest, redis, admin=admin)
     comment_out = await service.convert_comment_to_out(comment)
-    
+
     await notify_new_comment(comment.id)
-    
+
+    import asyncio as _asyncio
+    if not admin:
+        _asyncio.create_task(_create_comment_notification(comment, data))
+
     return success(comment_out.model_dump())
 
 
@@ -198,6 +201,42 @@ async def notify_new_comment(comment_id: int):
         "type": "new_comment",
         "comment_id": comment_id,
     })
+
+
+async def _create_comment_notification(comment, data) -> None:
+    should_notify = False
+    if data.parent_id is None:
+        should_notify = True
+    else:
+        from app.modules.comments.models import Comment as CommentModel, GuestIdentity as GuestModel
+        parent = await CommentModel.get_or_none(id=data.parent_id).prefetch_related("guest")
+        if parent:
+            parent_guest = await parent.guest
+            if parent_guest and (parent_guest.guest_token or "").startswith("admin-"):
+                should_notify = True
+
+    if not should_notify:
+        return
+
+    from app.modules.system.service import AdminNotificationService
+    from app.modules.system.models import AdminNotification
+
+    article = await comment.article
+    guest = await comment.guest
+    nickname = guest.nickname or "匿名"
+
+    if data.parent_id is None:
+        title = f"新评论：{nickname} 在《{article.title}》发表了评论"
+    else:
+        title = f"新回复：{nickname} 回复了管理员评论"
+
+    await AdminNotificationService.create_notification(
+        type=AdminNotification.TYPE_COMMENT,
+        title=title,
+        content=comment.content[:200],
+        link=f"/admin/comments?article_id={article.id}",
+        source_id=comment.id,
+    )
 
 
 @router.websocket("/ws/admin/comments")

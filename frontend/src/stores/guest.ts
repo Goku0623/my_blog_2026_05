@@ -13,14 +13,11 @@ const buildGuestDisplayName = (guestToken?: string, nickname?: string) => {
 }
 
 export const useGuestStore = defineStore('guest', () => {
-  // 状态
   const guestToken = ref<string | null>(localStorage.getItem(GUEST_TOKEN_KEY))
   const guestName = ref<string>(localStorage.getItem(GUEST_NAME_KEY) || '')
 
-  // 计算属性
   const isGuest = computed(() => !!guestToken.value)
 
-  // 获取游客 token
   const fetchGuestToken = async () => {
     try {
       const response = await getGuestIdentity()
@@ -30,7 +27,6 @@ export const useGuestStore = defineStore('guest', () => {
       guestToken.value = guest_token
       guestName.value = guestDisplayName
 
-      // 持久化到 localStorage
       localStorage.setItem(GUEST_TOKEN_KEY, guest_token)
       localStorage.setItem(GUEST_NAME_KEY, guestDisplayName)
 
@@ -41,14 +37,12 @@ export const useGuestStore = defineStore('guest', () => {
     }
   }
 
-  // 初始化游客身份
   const initGuest = async () => {
     if (!guestToken.value || !guestName.value.trim()) {
       await fetchGuestToken()
     }
   }
 
-  // 清空游客信息（用于测试或重置）
   const clearGuest = () => {
     guestToken.value = null
     guestName.value = ''

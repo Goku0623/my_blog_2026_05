@@ -396,7 +396,6 @@ const scheduleWeatherFetch = () => {
   if (weatherDelayTimer !== null) {
     window.clearTimeout(weatherDelayTimer)
   }
-  // ??????????????????????
   weatherDelayTimer = window.setTimeout(() => {
     weatherDelayTimer = null
     void fetchWeather()

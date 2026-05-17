@@ -68,6 +68,7 @@ class ArticleCreate(BaseModel):
     seo_title: Optional[str] = Field(None, max_length=200)
     seo_description: Optional[str] = Field(None, max_length=500)
     seo_keywords: Optional[str] = Field(None, max_length=200)
+    scheduled_publish_at: Optional[datetime] = None
 
 
 class ArticleUpdate(BaseModel):
@@ -83,6 +84,7 @@ class ArticleUpdate(BaseModel):
     seo_title: Optional[str] = Field(None, max_length=200)
     seo_description: Optional[str] = Field(None, max_length=500)
     seo_keywords: Optional[str] = Field(None, max_length=200)
+    scheduled_publish_at: Optional[datetime] = None
 
 
 class ArticleOut(BaseModel):
@@ -104,6 +106,7 @@ class ArticleOut(BaseModel):
     seo_title: Optional[str]
     seo_description: Optional[str]
     seo_keywords: Optional[str]
+    scheduled_publish_at: Optional[datetime]
     published_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
@@ -123,19 +126,10 @@ class ArticleListItem(BaseModel):
     cover_image_thumb: Optional[str] = None
     view_count: int
     is_featured: bool
+    scheduled_publish_at: Optional[datetime]
     published_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ArticleSearchResult(BaseModel):
-    id: int
-    title: str
-    slug: str
-    summary: Optional[str]
-    highlight: Optional[str]
 
     model_config = ConfigDict(from_attributes=True)
 

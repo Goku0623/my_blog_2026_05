@@ -24,7 +24,9 @@ const LANGUAGE_ALIAS_MAP: Record<string, string> = {
   html: 'xml',
 }
 
-// 创建 markdown-it 实例
+const IMAGE_URL_HINT_RE = /(?:\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s<>()]*)?|[?&](?:format|fmt|f)=(?:png|jpe?g|gif|webp|bmp|svg)\b[^\s<>()]*|[?&]fm=\d+\b[^\s<>()]*)/i
+const htmlAnchorPattern = /<a\s+[^>]*href=(["'])(https?:\/\/[^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi
+
 const md: MarkdownIt = new MarkdownIt({
   html: true,
   linkify: true,
@@ -53,20 +55,72 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   return self.renderToken(tokens, idx, options)
 }
 
+const plainImageUrlLinePattern = /(^|\n)(\s*)(https?:\/\/[^\s<>()]+?\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s<>()]*)?)(?=\s*(?:\n|$))/gi
+const markdownLinkImagePattern = /(?<!!)\[([^\]]*)\]\((https?:\/\/[^)\s]+?\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^)\s]*)?)\)/gi
+
+const normalizePlainImageUrlLines = (markdown: string): string => {
+  return markdown.replace(plainImageUrlLinePattern, (_match, prefix: string, indent: string, url: string) => {
+    return `${prefix}${indent}![image](${url})`
+  })
+}
+
+const normalizeMarkdownImageLinks = (markdown: string): string => {
+  return markdown.replace(markdownLinkImagePattern, (_match, altText: string, url: string) => {
+    const safeAltText = altText || 'image'
+    return `![${safeAltText}](${url})`
+  })
+}
+
+const htmlImageAnchorPattern = /<a\s+[^>]*href=(["'])(https?:\/\/[^"']+?\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^"']*)?)\1[^>]*>([\s\S]*?)<\/a>/gi
+
+const normalizeHtmlImageAnchors = (markdown: string): string => {
+  return markdown.replace(htmlImageAnchorPattern, (_match, _quote: string, href: string, innerHtml: string) => {
+    const trimmedInner = innerHtml.trim()
+    const altText = trimmedInner.replace(/<[^>]+>/g, '').trim() || 'image'
+    return `![${altText}](${href})`
+  })
+}
+
+const decodeHtmlEntities = (value: string): string => {
+  return value.replace(/&amp;/gi, '&')
+}
+
+const isImageLikeUrl = (url: string): boolean => {
+  const decoded = decodeHtmlEntities(url)
+  return IMAGE_URL_HINT_RE.test(decoded)
+}
+
+const normalizeRenderedHtmlImageAnchors = (html: string): string => {
+  return html.replace(htmlAnchorPattern, (match, _quote: string, href: string, innerHtml: string) => {
+    const normalizedHref = decodeHtmlEntities(href)
+    if (!isImageLikeUrl(normalizedHref)) return match
+    if (/<img\b/i.test(innerHtml)) return match
+
+    const plainText = innerHtml.replace(/<[^>]+>/g, '').trim()
+    const safeAlt = md.utils.escapeHtml(plainText || 'image')
+    const safeSrc = md.utils.escapeHtml(normalizedHref)
+    return `<img src="${safeSrc}" alt="${safeAlt}" loading="lazy" decoding="async" />`
+  })
+}
+
 export const useMarkdown = () => {
   const htmlContent = ref('')
 
-  // 渲染 Markdown 为 HTML
-  const render = (markdown: string): string => {
+  const render = (content: string): string => {
     try {
-      return md.render(markdown)
+      const normalized = normalizePlainImageUrlLines(
+        normalizeMarkdownImageLinks(
+          normalizeHtmlImageAnchors(content)
+        )
+      )
+      const html = md.render(normalized)
+      return normalizeRenderedHtmlImageAnchors(html)
     } catch (error) {
       console.error('Markdown 渲染失败:', error)
       return '<p>渲染失败</p>'
     }
   }
 
-  // 渲染 Markdown 并存储到 ref
   const renderToRef = (markdown: string) => {
     htmlContent.value = render(markdown)
   }

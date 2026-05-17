@@ -89,7 +89,6 @@ const writeCategoryCache = (items: Category[]) => {
     const payload: CategoryCachePayload = { timestamp: Date.now(), items }
     sessionStorage.setItem(CATEGORY_CACHE_KEY, JSON.stringify(payload))
   } catch {
-    // ignore cache write failure
   }
 }
 

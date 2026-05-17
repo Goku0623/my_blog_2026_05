@@ -201,6 +201,169 @@ async def test_search_endpoint_supports_field_and_time_filter(client: AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_scheduled_publish_draft_and_auto_publish(client: AsyncClient, auth_headers: dict):
+    future_time = datetime.now() + timedelta(minutes=5)
+    create_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "Scheduled Draft",
+            "content": "scheduled content",
+            "status": "draft",
+            "scheduled_publish_at": future_time.isoformat(),
+        },
+        headers=auth_headers,
+    )
+    assert create_resp.status_code == 200
+    article_id = create_resp.json()["data"]["id"]
+
+    # 草稿未到发布时间前，前台不可见。
+    article_slug = create_resp.json()["data"]["slug"]
+    before_visible = await client.get(f"/api/v1/articles/{article_slug}")
+    assert before_visible.status_code == 404
+
+    # 模拟任务触发后自动发布。
+    from app.modules.articles.service import ArticleService
+    published_count = await ArticleService.publish_due_scheduled_articles(now=future_time + timedelta(seconds=1))
+    assert published_count >= 1
+
+    refreshed = await Article.get(id=article_id)
+    assert refreshed.status == "published"
+    assert refreshed.scheduled_publish_at is None
+
+
+@pytest.mark.asyncio
+async def test_scheduled_publish_preserves_each_article_schedule_time(client: AsyncClient, auth_headers: dict):
+    first_schedule = datetime.now() + timedelta(minutes=3)
+    second_schedule = datetime.now() + timedelta(minutes=8)
+
+    first_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "Scheduled First",
+            "content": "scheduled first content",
+            "status": "draft",
+            "scheduled_publish_at": first_schedule.isoformat(),
+        },
+        headers=auth_headers,
+    )
+    second_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "Scheduled Second",
+            "content": "scheduled second content",
+            "status": "draft",
+            "scheduled_publish_at": second_schedule.isoformat(),
+        },
+        headers=auth_headers,
+    )
+    assert first_resp.status_code == 200
+    assert second_resp.status_code == 200
+
+    first_id = first_resp.json()["data"]["id"]
+    second_id = second_resp.json()["data"]["id"]
+
+    from app.modules.articles.service import ArticleService
+    published_count = await ArticleService.publish_due_scheduled_articles(now=second_schedule + timedelta(seconds=1))
+    assert published_count >= 2
+
+    first_article = await Article.get(id=first_id)
+    second_article = await Article.get(id=second_id)
+    assert first_article.status == "published"
+    assert second_article.status == "published"
+    assert first_article.scheduled_publish_at is None
+    assert second_article.scheduled_publish_at is None
+    assert first_article.published_at is not None
+    assert second_article.published_at is not None
+    assert first_article.published_at.replace(tzinfo=None) == first_schedule.replace(tzinfo=None)
+    assert second_article.published_at.replace(tzinfo=None) == second_schedule.replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_publish_not_triggered_early_with_timezone_input(client: AsyncClient, auth_headers: dict):
+    from app.modules.articles.service import ArticleService
+
+    current_time = ArticleService._utcnow_naive()
+    future_time = current_time + timedelta(minutes=90)
+    future_time_with_tz = future_time.replace(tzinfo=ArticleService.APP_TIMEZONE).isoformat()
+    create_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "Scheduled TZ Future",
+            "content": "scheduled timezone future content",
+            "status": "draft",
+            "scheduled_publish_at": future_time_with_tz,
+        },
+        headers=auth_headers,
+    )
+    assert create_resp.status_code == 200
+    article_id = create_resp.json()["data"]["id"]
+
+    # 以更早的时间触发任务，不应提前发布。
+    published_count = await ArticleService.publish_due_scheduled_articles(now=current_time + timedelta(minutes=10))
+    refreshed = await Article.get(id=article_id)
+    assert refreshed.status == "draft"
+    assert refreshed.published_at is None
+    assert refreshed.scheduled_publish_at is not None
+    assert published_count >= 0
+
+
+@pytest.mark.asyncio
+async def test_edit_article_keeps_scheduled_publish_local_time(client: AsyncClient, auth_headers: dict):
+    from app.modules.articles.service import ArticleService
+
+    create_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "Scheduled Local Time Keep",
+            "content": "scheduled local time content",
+            "status": "draft",
+            "scheduled_publish_at": "2026-05-15T19:00:00+08:00",
+        },
+        headers=auth_headers,
+    )
+    assert create_resp.status_code == 200
+    article_id = create_resp.json()["data"]["id"]
+
+    update_resp = await client.put(
+        f"/api/v1/admin/articles/{article_id}",
+        json={"summary": "only update summary"},
+        headers=auth_headers,
+    )
+    assert update_resp.status_code == 200
+    assert update_resp.json()["data"]["status"] == "draft"
+
+    refreshed = await Article.get(id=article_id)
+    assert refreshed.scheduled_publish_at is not None
+    assert refreshed.scheduled_publish_at.astimezone(ArticleService.APP_TIMEZONE).hour == 19
+    assert refreshed.scheduled_publish_at.minute == 0
+
+
+@pytest.mark.asyncio
+async def test_backfill_missing_published_at_for_historical_rows(client: AsyncClient, auth_headers: dict):
+    create_resp = await client.post(
+        "/api/v1/admin/articles",
+        json={
+            "title": "Backfill PublishedAt",
+            "content": "backfill content",
+        },
+        headers=auth_headers,
+    )
+    article_id = create_resp.json()["data"]["id"]
+    await client.post(f"/api/v1/admin/articles/{article_id}/publish", headers=auth_headers)
+
+    # 模拟历史脏数据：状态为已发布，但 published_at 为空。
+    await Article.filter(id=article_id).update(published_at=None)
+
+    from app.modules.articles.service import ArticleService
+    backfilled = await ArticleService.backfill_missing_published_at()
+    assert backfilled >= 1
+
+    refreshed = await Article.get(id=article_id)
+    assert refreshed.status == "published"
+    assert refreshed.published_at is not None
+
+
+@pytest.mark.asyncio
 async def test_create_category_and_tag(client: AsyncClient, auth_headers: dict):
     category_resp = await client.post(
         "/api/v1/admin/categories",

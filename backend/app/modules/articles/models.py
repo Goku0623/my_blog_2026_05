@@ -56,13 +56,14 @@ class Article(Model):
     seo_title = fields.CharField(max_length=200, null=True)
     seo_description = fields.CharField(max_length=500, null=True)
     seo_keywords = fields.CharField(max_length=200, null=True)
+    scheduled_publish_at = fields.DatetimeField(null=True)
     published_at = fields.DatetimeField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
     class Meta:
         table = "articles"
-        indexes = [("status", "published_at")]
+        indexes = [("status", "published_at"), ("status", "scheduled_publish_at")]
 
 
 class ArticleTag(Model):

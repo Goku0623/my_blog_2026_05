@@ -17,7 +17,9 @@ from app.modules.ai.schemas import (
     AICommentReplyRequest,
     AICommentReplyResponse,
 )
-from app.modules.articles.models import Article, Category, Tag, ArticleTag
+from app.modules.articles.models import Article, Category, Tag
+from app.modules.articles.schemas import ArticleCreate
+from app.modules.articles.service import ArticleService
 from app.modules.system.models import SiteConfig
 from app.modules.comments.models import Comment
 
@@ -40,46 +42,74 @@ async def verify_n8n_secret(provided_secret: str) -> bool:
     return provided_secret == expected_secret
 
 
-async def receive_n8n_article(payload: N8NArticlePayload) -> Article:
-    if not await verify_n8n_secret(payload.n8n_secret):
+async def receive_n8n_article(payload: N8NArticlePayload, n8n_secret: str) -> Article:
+    if not await verify_n8n_secret(n8n_secret):
         raise UnauthorizedException("N8N 密钥验证失败")
-    
-    category = None
-    if payload.category_name:
+
+    category_id = payload.category_id
+    if not category_id and payload.category_name:
         category = await Category.get_or_none(name=payload.category_name)
         if not category:
+            import re
+            slug_base = re.sub(r"[^\w\s-]", "", payload.category_name.lower())
+            slug_base = re.sub(r"[-\s]+", "-", slug_base).strip("-") or "category"
+            slug = slug_base
+            counter = 1
+            while await Category.filter(slug=slug).exists():
+                counter += 1
+                slug = f"{slug_base}-{counter}"
             category = await Category.create(
                 name=payload.category_name,
-                slug=payload.category_name.lower().replace(" ", "-"),
+                slug=slug,
             )
-    
-    import re
-    slug = re.sub(r'[^\w\s-]', '', payload.title.lower())
-    slug = re.sub(r'[-\s]+', '-', slug).strip('-')
-    
-    existing_slug_count = await Article.filter(slug__startswith=slug).count()
-    if existing_slug_count > 0:
-        slug = f"{slug}-{existing_slug_count + 1}"
-    
-    article = await Article.create(
+        category_id = category.id
+
+    resolved_tag_ids: list[int] = []
+    if payload.tag_ids:
+        existing_ids = await Tag.filter(id__in=payload.tag_ids).values_list("id", flat=True)
+        resolved_tag_ids.extend(list(existing_ids))
+
+    if payload.tags:
+        import re
+        for tag_name in payload.tags:
+            normalized_name = (tag_name or "").strip()
+            if not normalized_name:
+                continue
+            tag = await Tag.get_or_none(name=normalized_name)
+            if not tag:
+                tag_slug_base = re.sub(r"[^\w\s-]", "", normalized_name.lower())
+                tag_slug_base = re.sub(r"[-\s]+", "-", tag_slug_base).strip("-") or "tag"
+                tag_slug = tag_slug_base
+                counter = 1
+                while await Tag.filter(slug=tag_slug).exists():
+                    counter += 1
+                    tag_slug = f"{tag_slug_base}-{counter}"
+                tag = await Tag.create(name=normalized_name, slug=tag_slug)
+            resolved_tag_ids.append(tag.id)
+
+    unique_tag_ids = list(dict.fromkeys(resolved_tag_ids))
+    status = payload.status if payload.status in {
+        Article.STATUS_DRAFT,
+        Article.STATUS_PUBLISHED,
+        Article.STATUS_UNPUBLISHED,
+    } else Article.STATUS_DRAFT
+
+    article_data = ArticleCreate(
         title=payload.title,
-        slug=slug,
-        content=payload.content,
         summary=payload.summary,
-        status=Article.STATUS_DRAFT,
-        category=category,
+        content=payload.content,
+        category_id=category_id,
+        tag_ids=unique_tag_ids,
+        status=status,
+        cover_image=payload.cover_image,
+        is_featured=payload.is_featured,
+        allow_comment=payload.allow_comment,
+        seo_title=payload.seo_title,
+        seo_description=payload.seo_description,
+        seo_keywords=payload.seo_keywords,
+        scheduled_publish_at=payload.scheduled_publish_at,
     )
-    
-    for tag_name in payload.tags:
-        tag = await Tag.get_or_none(name=tag_name)
-        if not tag:
-            tag_slug = re.sub(r'[^\w\s-]', '', tag_name.lower())
-            tag_slug = re.sub(r'[-\s]+', '-', tag_slug).strip('-')
-            tag = await Tag.create(name=tag_name, slug=tag_slug)
-        
-        await ArticleTag.create(article=article, tag=tag)
-    
-    return article
+    return await ArticleService.create_article(article_data, admin_id=0)
 
 
 async def get_location_from_ip(ip: str) -> Optional[Dict[str, Any]]:

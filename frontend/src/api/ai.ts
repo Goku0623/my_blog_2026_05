@@ -17,19 +17,6 @@ export interface AiWeatherData {
   updated_at: string
 }
 
-export interface AiCommentReplyParams {
-  comment_id: number
-  article_title: string
-  comment_content: string
-  context_comments?: string[]
-}
-
-// 获取天气信息
 export const getWeather = (params: AiWeatherParams) => {
   return request.get<{ data: AiWeatherData }>('/ai/weather', { params })
-}
-
-// 管理端：AI 生成评论回复
-export const generateCommentReply = (data: AiCommentReplyParams) => {
-  return request.post('/ai/admin/comment-reply', data)
 }

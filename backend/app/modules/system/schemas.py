@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Optional, List, Any
-from pydantic import BaseModel, ConfigDict
+from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SiteConfigOut(BaseModel):
@@ -31,6 +31,15 @@ class SiteConfigBulkUpdate(BaseModel):
 class SensitiveWordCreate(BaseModel):
     word: str
     category: Optional[str] = None
+
+
+class SensitiveWordImportItem(BaseModel):
+    word: str = Field(..., min_length=1, max_length=100)
+    category: Optional[str] = Field(default=None, max_length=100)
+
+
+class SensitiveWordBulkImportRequest(BaseModel):
+    items: List[SensitiveWordImportItem] = Field(default_factory=list)
 
 
 class SensitiveWordOut(BaseModel):
@@ -84,8 +93,19 @@ class ScheduledTaskUpdate(BaseModel):
     cron_expression: Optional[str] = None
 
 
-class PaginatedResponse(BaseModel):
-    total: int
-    page: int
-    page_size: int
-    items: List[Any]
+class AdminNotificationOut(BaseModel):
+    id: int
+    type: str
+    title: str
+    content: Optional[str] = None
+    link: Optional[str] = None
+    source_id: Optional[int] = None
+    is_read: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminNotificationUnreadCount(BaseModel):
+    count: int
+

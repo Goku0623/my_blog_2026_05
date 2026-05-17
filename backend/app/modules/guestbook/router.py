@@ -23,12 +23,13 @@ async def list_guestbook_messages(
     )
 
     items = []
-    from app.modules.comments.service import resolve_guest_display_name
+    from app.modules.comments.service import resolve_guest_display_name, resolve_guest_avatar
     for msg in messages:
         guest = await msg.guest
         items.append({
             "id": msg.id,
             "guest_name": await resolve_guest_display_name(guest),
+            "guest_avatar": await resolve_guest_avatar(guest),
             "content": msg.content,
             "rendered_content": msg.rendered_content,
             "status": msg.status,
@@ -53,11 +54,16 @@ async def create_guestbook_message(
     message = await service.create_message(data, guest, redis, admin=admin)
 
     guest_obj = await message.guest
-    from app.modules.comments.service import resolve_guest_display_name
+    from app.modules.comments.service import resolve_guest_display_name, resolve_guest_avatar
+
+    import asyncio as _asyncio
+    if not admin:
+        _asyncio.create_task(_create_guestbook_notification(message, guest_obj))
 
     return success({
         "id": message.id,
         "guest_name": await resolve_guest_display_name(guest_obj),
+        "guest_avatar": await resolve_guest_avatar(guest_obj),
         "content": message.content,
         "rendered_content": message.rendered_content,
         "status": message.status,
@@ -73,20 +79,20 @@ async def list_admin_guestbook_messages(
     page_size: int = 20,
     admin: AdminUser = Depends(get_current_admin),
 ):
-    _ = admin
     messages, total = await service.list_messages_admin(
         status=status,
         keyword=keyword,
         page=page,
         page_size=page_size,
     )
-    from app.modules.comments.service import resolve_guest_display_name
+    from app.modules.comments.service import resolve_guest_display_name, resolve_guest_avatar
     items = []
     for msg in messages:
         guest = await msg.guest
         items.append({
             "id": msg.id,
             "guest_name": await resolve_guest_display_name(guest),
+            "guest_avatar": await resolve_guest_avatar(guest),
             "content": msg.content,
             "rendered_content": msg.rendered_content,
             "status": msg.status,
@@ -130,3 +136,17 @@ async def admin_action_guestbook_message(
         "created_at": message.created_at.isoformat(),
         "updated_at": message.updated_at.isoformat(),
     })
+
+
+async def _create_guestbook_notification(message, guest_obj) -> None:
+    from app.modules.system.service import AdminNotificationService
+    from app.modules.system.models import AdminNotification
+
+    nickname = guest_obj.nickname or "匿名"
+    await AdminNotificationService.create_notification(
+        type=AdminNotification.TYPE_GUESTBOOK,
+        title=f"新留言：{nickname} 在留言墙留言",
+        content=message.content[:200],
+        link="/admin/guestbook",
+        source_id=message.id,
+    )

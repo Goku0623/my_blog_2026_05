@@ -34,7 +34,7 @@
                 {{ article.category.name }}
               </router-link>
               <span class="inline-flex items-center gap-1.5">
-                <Calendar class="size-3" /> {{ formatFriendlyTime(article.created_at) }}
+                <Calendar class="size-3" /> {{ formatFriendlyTime(displayPublishedTime) }}
               </span>
               <span class="inline-flex items-center gap-1.5">
                 <Eye class="size-3" /> {{ article.view_count }} 阅读
@@ -56,8 +56,9 @@
             </p>
 
             <div class="mt-8 flex items-center gap-4">
-              <div class="grid place-items-center size-11 rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--accent)] text-white font-semibold shadow-[var(--shadow-md)]">
-                {{ authorInitial }}
+              <div class="grid place-items-center size-11 rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--accent)] text-white font-semibold shadow-[var(--shadow-md)] overflow-hidden">
+                <img v-if="siteStore.config.admin_avatar" :src="siteStore.config.admin_avatar" alt="" class="size-full object-cover" />
+                <span v-else>{{ authorInitial }}</span>
               </div>
               <div>
                 <p class="text-sm font-medium text-[var(--text)]">{{ siteStore.config.site_author || '作者' }}</p>
@@ -76,6 +77,7 @@
           <!-- 正文 -->
           <div ref="articleBody" class="min-w-0">
             <div
+              ref="articleContent"
               class="prose prose-slate max-w-none dark:prose-invert prose-pre:rounded-xl prose-img:rounded-xl prose-headings:scroll-mt-24"
               v-html="renderedContent"
             />
@@ -100,8 +102,9 @@
             <div class="mt-12 relative overflow-hidden rounded-2xl border border-[var(--border)] bg-gradient-to-br from-[var(--brand-soft)]/60 via-[var(--surface)] to-[var(--surface)] p-6 sm:p-8">
               <div aria-hidden="true" class="absolute -top-12 -right-12 size-40 bg-[var(--brand)]/15 rounded-full blur-3xl"></div>
               <div class="relative flex flex-col sm:flex-row sm:items-center gap-5">
-                <div class="grid place-items-center size-16 shrink-0 rounded-2xl bg-gradient-to-br from-[var(--brand)] via-[#9333ea] to-[var(--accent)] text-white text-xl font-bold shadow-[var(--shadow-md)]">
-                  {{ authorInitial }}
+                <div class="grid place-items-center size-16 shrink-0 rounded-2xl bg-gradient-to-br from-[var(--brand)] via-[#9333ea] to-[var(--accent)] text-white text-xl font-bold shadow-[var(--shadow-md)] overflow-hidden">
+                  <img v-if="siteStore.config.admin_avatar" :src="siteStore.config.admin_avatar" alt="" class="size-full object-cover" />
+                  <span v-else>{{ authorInitial }}</span>
                 </div>
                 <div class="flex-1 min-w-0">
                   <p class="eyebrow">Author</p>
@@ -173,7 +176,7 @@
                 <div class="space-y-3 text-sm">
                   <div class="flex items-center justify-between gap-4">
                     <span class="text-[var(--text-muted)]">发布</span>
-                    <span class="text-[var(--text)] tabular-nums">{{ formatFriendlyTime(article.created_at) }}</span>
+                    <span class="text-[var(--text)] tabular-nums">{{ formatFriendlyTime(displayPublishedTime) }}</span>
                   </div>
                   <div class="flex items-center justify-between gap-4">
                     <span class="text-[var(--text-muted)]">阅读量</span>
@@ -208,6 +211,95 @@
       <UEmpty description="文章不存在或已被删除" />
     </div>
 
+    <!-- 正文图片预览 Lightbox：v-show 避免重复创建 DOM -->
+    <div
+      v-show="lightboxVisible"
+      :aria-hidden="!lightboxVisible"
+      class="fixed inset-0 z-[120] bg-black/90"
+      role="dialog"
+      aria-modal="true"
+      aria-label="图片预览"
+      @click.self="closeLightbox"
+      @wheel.prevent="onLightboxWheel"
+    >
+      <!-- 上一张 -->
+      <button
+        v-if="lightboxImages.length > 1"
+        type="button"
+        class="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-sm text-white hover:bg-white/25 transition-colors"
+        @click="showPrevLightboxImage"
+      >
+        上一张
+      </button>
+
+      <!-- 下一张 -->
+      <button
+        v-if="lightboxImages.length > 1"
+        type="button"
+        class="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-sm text-white hover:bg-white/25 transition-colors"
+        @click="showNextLightboxImage"
+      >
+        下一张
+      </button>
+
+      <!-- 图片区域 -->
+      <div
+        class="flex h-full w-full items-center justify-center overflow-hidden p-12 sm:p-16"
+        @click="closeLightbox"
+      >
+        <img
+          ref="lightboxImg"
+          :src="lightboxImageSrc"
+          :alt="lightboxImageAlt"
+          class="max-h-full max-w-full rounded-xl object-contain shadow-2xl select-none"
+          style="transform-origin: center center; will-change: transform; transform: translate3d(0,0,0) scale3d(1,1,1); transition: transform 0.15s linear; cursor: zoom-in; touch-action: none;"
+          draggable="false"
+          @click.stop
+          @pointerdown="onLightboxImgPointerdown"
+          @pointermove="onLightboxImgPointermove"
+          @pointerup="onLightboxImgPointerup"
+          @pointercancel="onLightboxImgPointerup"
+          @dblclick="_lbZoom === 1 ? zoomIn() : resetLightboxZoom()"
+        />
+      </div>
+
+      <!-- 底部工具栏：缩放控制 + 图片计数 -->
+      <div class="absolute bottom-4 inset-x-0 z-10 flex items-center justify-center gap-3 px-4 pointer-events-none">
+        <!-- 缩放控件：ref 由 _applyLbTransform 直接操作，无任何 Vue 响应式绑定 -->
+        <div class="flex items-center gap-1 rounded-full bg-white/15 px-1.5 py-1 pointer-events-auto">
+          <button
+            ref="lbBtnZoomOut"
+            type="button"
+            class="grid place-items-center size-7 rounded-full text-white text-base font-medium transition-colors hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed"
+            title="缩小 (-)"
+            @click="zoomOut"
+          >−</button>
+          <button
+            ref="lbZoomText"
+            type="button"
+            class="min-w-[3.2rem] text-center text-xs text-white/90 tabular-nums hover:text-white transition-colors px-1"
+            title="重置缩放 (0)"
+            @click="resetLightboxZoom"
+          >100%</button>
+          <button
+            ref="lbBtnZoomIn"
+            type="button"
+            class="grid place-items-center size-7 rounded-full text-white text-base font-medium transition-colors hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed"
+            title="放大 (+)"
+            @click="zoomIn"
+          >+</button>
+        </div>
+
+        <!-- 图片计数 -->
+        <div
+          v-if="lightboxImages.length > 1"
+          class="rounded-full bg-white/15 px-3 py-1 text-xs text-white pointer-events-none"
+        >
+          {{ lightboxIndex + 1 }} / {{ lightboxImages.length }}
+        </div>
+      </div>
+    </div>
+
     <SiteFooter />
   </div>
 </template>
@@ -229,8 +321,9 @@ const { render } = useMarkdown()
 const siteStore = useSiteStore()
 
 const article = ref<Article | null>(null)
-const loading = ref(false)
+const loading = ref(true)
 const articleBody = useTemplateRef<HTMLElement>('articleBody')
+const articleContent = useTemplateRef<HTMLElement>('articleContent')
 const commentTrigger = useTemplateRef<HTMLElement>('commentTrigger')
 const shouldRenderComment = ref(false)
 let commentObserver: IntersectionObserver | null = null
@@ -251,12 +344,52 @@ const activeHeading = ref('')
 const progressPercent = ref(0)
 let scrollRafId: number | null = null
 let articleImageLoadAbortController: AbortController | null = null
+let articleImagePreviewAbortController: AbortController | null = null
 let resizeDebounceTimer: number | null = null
+const lightboxImages = ref<Array<{ src: string; alt: string }>>([])
+const lightboxVisible = ref(false)
+const lightboxImageSrc = ref('')
+const lightboxImageAlt = ref('')
+const lightboxIndex = ref(0)
+const lightboxImgEl = useTemplateRef<HTMLImageElement>('lightboxImg')
+const lbZoomTextEl = useTemplateRef<HTMLElement>('lbZoomText')
+const lbBtnZoomIn = useTemplateRef<HTMLButtonElement>('lbBtnZoomIn')
+const lbBtnZoomOut = useTemplateRef<HTMLButtonElement>('lbBtnZoomOut')
+let _lbZoom = 1
+let _lbPanX = 0
+let _lbPanY = 0
+let _lbDragging = false
+let _lbDragOX = 0
+let _lbDragOY = 0
+let _lbDragOPX = 0
+let _lbDragOPY = 0
+let _lbLastMoveTs = 0
+let _lbLastPanX = 0
+let _lbLastPanY = 0
+let _lbVelocityX = 0
+let _lbVelocityY = 0
+let _lbTransitionTimer: number | null = null
+let _lbApplyRaf: number | null = null
+let _lbInertiaRaf: number | null = null
+let _lbInertiaLastTs = 0
+let _lbPreloadTimer: number | null = null
+const _lbPointers = new Map<number, { x: number; y: number }>()
+let _lbPinching = false
+let _lbPinchDist = 0
+let _lbPinchZoom = 1
+let _lbPinchMidX = 0
+let _lbPinchMidY = 0
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 5
+const ZOOM_STEP = 0.12
+const PRELOAD_OFFSETS = [0, 1, -1, 2, -2, 3, -3]
+const MAX_PRELOAD_CACHE_SIZE = 240
+const lightboxPreloadCache = new Set<string>()
 
 const renderedContent = computed(() => {
   if (!article.value) return ''
-  if (article.value.rendered_content) return article.value.rendered_content
-  return render(article.value.content || '')
+  if (article.value.content) return render(article.value.content)
+  return article.value.rendered_content || ''
 })
 
 const canComment = computed(() => {
@@ -266,12 +399,18 @@ const canComment = computed(() => {
 })
 
 const wordCount = computed(() => {
-  if (!article.value) return 0
-  const txt = (article.value.content || '').replace(/<[^>]+>/g, '')
-  return txt.replace(/\s+/g, '').length
+  const html = renderedContent.value
+  if (!html) return 0
+
+  const container = document.createElement('div')
+  container.innerHTML = html
+  container.querySelectorAll('script, style, noscript').forEach((el) => el.remove())
+  const plainText = container.textContent || ''
+  return plainText.replace(/\s+/g, '').length
 })
 
 const readingTime = computed(() => Math.max(1, Math.round(wordCount.value / 350)))
+const displayPublishedTime = computed(() => article.value?.published_at || article.value?.created_at || '')
 
 const authorInitial = computed(() => {
   const name = siteStore.config.site_author || siteStore.config.site_name || 'A'
@@ -279,23 +418,26 @@ const authorInitial = computed(() => {
 })
 
 const fetchArticle = async () => {
+  loading.value = true
   try {
-    loading.value = true
     const slug = route.params.slug as string
     const res = await getArticle(slug)
     article.value = res.data?.data ?? null
     if (article.value) {
       document.title = `${article.value.title} - ${article.value.category?.name ?? '博客'}`
       shouldRenderComment.value = false
-      await nextTick()
-      buildToc()
-      setupCommentObserver()
     }
   } catch (e) {
     console.error(e)
     toast.error('获取文章详情失败')
   } finally {
     loading.value = false
+  }
+  if (article.value) {
+    await nextTick()
+    buildToc()
+    bindBodyImageLoadListener()
+    setupCommentObserver()
   }
 }
 
@@ -329,17 +471,487 @@ const buildToc = () => {
 
 const bindBodyImageLoadListener = () => {
   articleImageLoadAbortController?.abort()
-  if (!articleBody.value) return
-  const controller = new AbortController()
-  articleImageLoadAbortController = controller
+  articleImagePreviewAbortController?.abort()
+  if (!articleContent.value) return
+  const loadController = new AbortController()
+  const previewController = new AbortController()
+  articleImageLoadAbortController = loadController
+  articleImagePreviewAbortController = previewController
 
-  const images = articleBody.value.querySelectorAll('img')
+  const images = articleContent.value.querySelectorAll<HTMLImageElement>('img')
+  const imageItems: Array<{ src: string; alt: string }> = []
   images.forEach((img) => {
-    if (!img.complete) {
-      img.addEventListener('load', handleResize, { signal: controller.signal })
-      img.addEventListener('error', handleResize, { signal: controller.signal })
+    const src = resolvePreviewSrc(img)
+    if (!src) {
+      delete img.dataset.lightboxIndex
+      img.classList.remove('article-previewable-image')
+      return
+    }
+    img.dataset.lightboxIndex = String(imageItems.length)
+    img.classList.add('article-previewable-image')
+    imageItems.push({
+      src,
+      alt: img.alt || '',
+    })
+    if (src !== img.src) {
+      img.src = src
+    }
+
+    const shell = decoratePreviewableImage(img)
+    const currentIndex = Number(img.dataset.lightboxIndex ?? '-1')
+    if (currentIndex >= 0) {
+      shell.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        openLightbox(currentIndex)
+      }, { signal: previewController.signal })
+      shell.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        openLightbox(currentIndex)
+      }, { signal: previewController.signal })
     }
   })
+  lightboxImages.value = imageItems
+
+  images.forEach((img) => {
+    if (!img.complete) {
+      img.addEventListener('load', handleResize, { signal: loadController.signal })
+      img.addEventListener('error', handleResize, { signal: loadController.signal })
+    }
+  })
+}
+
+const decodeImageSrc = (src: string): string => {
+  if (!src) return ''
+  const value = src.trim()
+  if (!value) return ''
+  return value.replace(/&amp;/gi, '&')
+}
+
+const resolvePreviewSrc = (img: HTMLImageElement): string => {
+  const candidates = [
+    img.getAttribute('data-src'),
+    img.getAttribute('data-original'),
+    img.currentSrc,
+    img.src,
+    img.getAttribute('src'),
+  ]
+  for (const candidate of candidates) {
+    const decoded = decodeImageSrc(candidate || '')
+    if (decoded) return decoded
+  }
+  return ''
+}
+
+const decoratePreviewableImage = (img: HTMLImageElement): HTMLElement => {
+  const currentParent = img.parentElement
+  let shell: HTMLElement
+  if (currentParent?.classList.contains('article-image-preview-shell')) {
+    shell = currentParent
+  } else {
+    shell = document.createElement('span')
+    shell.className = 'article-image-preview-shell'
+    img.replaceWith(shell)
+    shell.appendChild(img)
+    const hint = document.createElement('span')
+    hint.className = 'article-image-preview-hint'
+    hint.textContent = '点击预览'
+    shell.appendChild(hint)
+  }
+
+  shell.setAttribute('role', 'button')
+  shell.setAttribute('tabindex', '0')
+  shell.setAttribute('aria-label', '预览图片')
+  shell.setAttribute('title', '点击预览图片')
+  return shell
+}
+
+const _setLbTransition = (enabled: boolean) => {
+  const img = lightboxImgEl.value
+  if (!img) return
+  img.style.transition = enabled ? 'transform 0.15s linear' : 'none'
+}
+
+const _clampLbPan = () => {
+  const img = lightboxImgEl.value
+  if (!img || _lbZoom <= 1) {
+    _lbPanX = 0
+    _lbPanY = 0
+    return { clampedX: false, clampedY: false }
+  }
+  const baseWidth = Math.max(1, img.offsetWidth)
+  const baseHeight = Math.max(1, img.offsetHeight)
+  const maxPanX = Math.max(0, (baseWidth * _lbZoom - baseWidth) / 2)
+  const maxPanY = Math.max(0, (baseHeight * _lbZoom - baseHeight) / 2)
+  const prevPanX = _lbPanX
+  const prevPanY = _lbPanY
+  _lbPanX = Math.min(maxPanX, Math.max(-maxPanX, _lbPanX))
+  _lbPanY = Math.min(maxPanY, Math.max(-maxPanY, _lbPanY))
+  return {
+    clampedX: _lbPanX !== prevPanX,
+    clampedY: _lbPanY !== prevPanY,
+  }
+}
+
+const _stopLbInertia = () => {
+  if (_lbInertiaRaf !== null) {
+    window.cancelAnimationFrame(_lbInertiaRaf)
+    _lbInertiaRaf = null
+  }
+}
+
+const _startLbInertia = () => {
+  _stopLbInertia()
+  if (_lbZoom <= 1) return
+  const minSpeed = 0.01
+  if (Math.abs(_lbVelocityX) < minSpeed && Math.abs(_lbVelocityY) < minSpeed) return
+  _setLbTransition(false)
+  _lbInertiaLastTs = performance.now()
+
+  const tick = (now: number) => {
+    const dt = Math.max(1, now - _lbInertiaLastTs)
+    _lbInertiaLastTs = now
+    const friction = Math.pow(0.92, dt / 16.67)
+    _lbVelocityX *= friction
+    _lbVelocityY *= friction
+    _lbPanX += _lbVelocityX * dt
+    _lbPanY += _lbVelocityY * dt
+    const clamped = _clampLbPan()
+    if (clamped.clampedX) _lbVelocityX = 0
+    if (clamped.clampedY) _lbVelocityY = 0
+    _applyLbTransformNow()
+
+    if (Math.abs(_lbVelocityX) < minSpeed && Math.abs(_lbVelocityY) < minSpeed) {
+      _lbInertiaRaf = null
+      _setLbTransition(true)
+      return
+    }
+    _lbInertiaRaf = window.requestAnimationFrame(tick)
+  }
+
+  _lbInertiaRaf = window.requestAnimationFrame(tick)
+}
+
+const _preloadLightboxImage = (src: string) => {
+  if (!src || lightboxPreloadCache.has(src)) return
+  lightboxPreloadCache.add(src)
+  if (lightboxPreloadCache.size > MAX_PRELOAD_CACHE_SIZE) {
+    lightboxPreloadCache.clear()
+    lightboxPreloadCache.add(src)
+  }
+  const img = new Image()
+  img.decoding = 'async'
+  img.src = src
+}
+
+const _scheduleLightboxPreload = (centerIndex: number) => {
+  if (_lbPreloadTimer !== null) {
+    window.clearTimeout(_lbPreloadTimer)
+    _lbPreloadTimer = null
+  }
+  _lbPreloadTimer = window.setTimeout(() => {
+    _lbPreloadTimer = null
+    const total = lightboxImages.value.length
+    if (!total) return
+    for (const offset of PRELOAD_OFFSETS) {
+      const idx = (centerIndex + offset + total) % total
+      const src = lightboxImages.value[idx]?.src || ''
+      _preloadLightboxImage(src)
+    }
+  }, 16)
+}
+
+const _getFirstTwoPointers = () => {
+  const iterator = _lbPointers.values()
+  const first = iterator.next().value as { x: number; y: number } | undefined
+  const second = iterator.next().value as { x: number; y: number } | undefined
+  if (!first || !second) return null
+  return [first, second] as const
+}
+
+const _resetLbGestureState = () => {
+  _lbPointers.clear()
+  _lbPinching = false
+  _lbDragging = false
+  _lbVelocityX = 0
+  _lbVelocityY = 0
+}
+
+const _applyLbTransformNow = () => {
+  const img = lightboxImgEl.value
+  if (!img) return
+  _clampLbPan()
+  img.style.transform = `translate3d(${_lbPanX}px,${_lbPanY}px,0) scale3d(${_lbZoom},${_lbZoom},1)`
+  img.style.cursor = _lbZoom > 1 ? ((_lbDragging || _lbPinching) ? 'grabbing' : 'grab') : 'zoom-in'
+  if (lbZoomTextEl.value) lbZoomTextEl.value.textContent = `${Math.round(_lbZoom * 100)}%`
+  if (lbBtnZoomOut.value) lbBtnZoomOut.value.disabled = _lbZoom <= ZOOM_MIN
+  if (lbBtnZoomIn.value) lbBtnZoomIn.value.disabled = _lbZoom >= ZOOM_MAX
+}
+
+const _scheduleLbTransform = () => {
+  if (_lbApplyRaf !== null) return
+  _lbApplyRaf = window.requestAnimationFrame(() => {
+    _lbApplyRaf = null
+    _applyLbTransformNow()
+  })
+}
+
+const _zoomAroundPoint = (nextZoom: number, clientX: number, clientY: number) => {
+  const img = lightboxImgEl.value
+  const prevZoom = _lbZoom
+  if (!img || nextZoom === prevZoom) {
+    _lbZoom = nextZoom
+    return
+  }
+  const rect = img.getBoundingClientRect()
+  const dx = clientX - (rect.left + rect.width / 2)
+  const dy = clientY - (rect.top + rect.height / 2)
+  const ratio = nextZoom / prevZoom
+  _lbPanX = _lbPanX * ratio + dx * (1 - ratio)
+  _lbPanY = _lbPanY * ratio + dy * (1 - ratio)
+  _lbZoom = nextZoom
+}
+
+const _suppressLbTransition = () => {
+  if (_lbTransitionTimer !== null) {
+    window.clearTimeout(_lbTransitionTimer)
+    _lbTransitionTimer = null
+  }
+  _setLbTransition(false)
+  _lbTransitionTimer = window.setTimeout(() => {
+    _lbTransitionTimer = null
+    _setLbTransition(true)
+  }, 180)
+}
+
+const _ensureLbTransition = () => {
+  if (_lbTransitionTimer !== null) {
+    window.clearTimeout(_lbTransitionTimer)
+    _lbTransitionTimer = null
+  }
+  _setLbTransition(true)
+}
+
+const resetLightboxZoom = () => {
+  _stopLbInertia()
+  if (_lbTransitionTimer !== null) {
+    window.clearTimeout(_lbTransitionTimer)
+    _lbTransitionTimer = null
+  }
+  _resetLbGestureState()
+  _lbZoom = 1
+  _lbPanX = 0
+  _lbPanY = 0
+  _setLbTransition(true)
+  _scheduleLbTransform()
+}
+
+const syncLightboxImageByIndex = () => {
+  const item = lightboxImages.value[lightboxIndex.value]
+  if (!item) return
+  lightboxImageSrc.value = item.src
+  lightboxImageAlt.value = item.alt
+  _preloadLightboxImage(item.src)
+  _scheduleLightboxPreload(lightboxIndex.value)
+  resetLightboxZoom()
+}
+
+const openLightbox = (index: number) => {
+  if (!lightboxImages.value.length) return
+  const safeIndex = Math.max(0, Math.min(index, lightboxImages.value.length - 1))
+  lightboxIndex.value = safeIndex
+  syncLightboxImageByIndex()
+  lightboxVisible.value = true
+}
+
+const closeLightbox = () => {
+  lightboxVisible.value = false
+  resetLightboxZoom()
+}
+
+const zoomIn = () => {
+  _ensureLbTransition()
+  _zoomAroundPoint(
+    Math.min(ZOOM_MAX, _lbZoom + ZOOM_STEP),
+    window.innerWidth / 2,
+    window.innerHeight / 2,
+  )
+  _scheduleLbTransform()
+}
+
+const zoomOut = () => {
+  _ensureLbTransition()
+  _zoomAroundPoint(
+    Math.max(ZOOM_MIN, _lbZoom - ZOOM_STEP),
+    window.innerWidth / 2,
+    window.innerHeight / 2,
+  )
+  _scheduleLbTransform()
+}
+
+const onLightboxWheel = (event: WheelEvent) => {
+  event.preventDefault()
+  _stopLbInertia()
+  _suppressLbTransition()
+  const scaleFactor = Math.exp(-event.deltaY * 0.0015)
+  const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, _lbZoom * scaleFactor))
+  _zoomAroundPoint(nextZoom, event.clientX, event.clientY)
+  _lbVelocityX = 0
+  _lbVelocityY = 0
+  _scheduleLbTransform()
+}
+
+const onLightboxImgPointerdown = (event: PointerEvent) => {
+  _stopLbInertia()
+  const target = event.currentTarget as HTMLElement
+  target.setPointerCapture(event.pointerId)
+  _lbPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  if (_lbPointers.size >= 2) {
+    const points = _getFirstTwoPointers()
+    if (!points) return
+    const [p1, p2] = points
+    _lbPinching = true
+    _lbDragging = false
+    _lbPinchDist = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1
+    _lbPinchZoom = _lbZoom
+    _lbPinchMidX = (p1.x + p2.x) / 2
+    _lbPinchMidY = (p1.y + p2.y) / 2
+    _setLbTransition(false)
+    _scheduleLbTransform()
+    return
+  }
+  if (_lbZoom <= 1) return
+  event.preventDefault()
+  _lbDragging = true
+  _lbDragOX = event.clientX
+  _lbDragOY = event.clientY
+  _lbDragOPX = _lbPanX
+  _lbDragOPY = _lbPanY
+  _lbLastPanX = _lbPanX
+  _lbLastPanY = _lbPanY
+  _lbLastMoveTs = performance.now()
+  _lbVelocityX = 0
+  _lbVelocityY = 0
+  _setLbTransition(false)
+  _scheduleLbTransform()
+}
+
+const onLightboxImgPointermove = (event: PointerEvent) => {
+  if (_lbPointers.has(event.pointerId)) {
+    _lbPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  }
+  if (_lbPinching && _lbPointers.size >= 2) {
+    event.preventDefault()
+    const points = _getFirstTwoPointers()
+    if (!points) return
+    const [p1, p2] = points
+    const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y) || _lbPinchDist
+    const midX = (p1.x + p2.x) / 2
+    const midY = (p1.y + p2.y) / 2
+    const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, _lbPinchZoom * (dist / _lbPinchDist)))
+    _zoomAroundPoint(nextZoom, midX, midY)
+    _lbPanX += midX - _lbPinchMidX
+    _lbPanY += midY - _lbPinchMidY
+    _lbPinchDist = dist
+    _lbPinchZoom = _lbZoom
+    _lbPinchMidX = midX
+    _lbPinchMidY = midY
+    _scheduleLbTransform()
+    return
+  }
+  if (!_lbDragging) return
+  _lbPanX = _lbDragOPX + (event.clientX - _lbDragOX)
+  _lbPanY = _lbDragOPY + (event.clientY - _lbDragOY)
+  const now = performance.now()
+  const dt = Math.max(1, now - _lbLastMoveTs)
+  _lbVelocityX = (_lbPanX - _lbLastPanX) / dt
+  _lbVelocityY = (_lbPanY - _lbLastPanY) / dt
+  _lbLastPanX = _lbPanX
+  _lbLastPanY = _lbPanY
+  _lbLastMoveTs = now
+  _scheduleLbTransform()
+}
+
+const onLightboxImgPointerup = (event: PointerEvent) => {
+  const target = event.currentTarget as HTMLElement
+  if (target.hasPointerCapture(event.pointerId)) {
+    target.releasePointerCapture(event.pointerId)
+  }
+  _lbPointers.delete(event.pointerId)
+  if (_lbPinching && _lbPointers.size >= 2) {
+    _scheduleLbTransform()
+    return
+  }
+  if (_lbPinching && _lbPointers.size < 2) {
+    _lbPinching = false
+    if (_lbPointers.size === 1 && _lbZoom > 1) {
+      const onlyPointer = _lbPointers.values().next().value as { x: number; y: number }
+      _lbDragging = true
+      _lbDragOX = onlyPointer.x
+      _lbDragOY = onlyPointer.y
+      _lbDragOPX = _lbPanX
+      _lbDragOPY = _lbPanY
+      _lbLastPanX = _lbPanX
+      _lbLastPanY = _lbPanY
+      _lbLastMoveTs = performance.now()
+      _lbVelocityX = 0
+      _lbVelocityY = 0
+      _setLbTransition(false)
+      _scheduleLbTransform()
+      return
+    }
+  }
+  if (!_lbDragging) return
+  _lbDragging = false
+  if (_lbPointers.size > 0) {
+    _scheduleLbTransform()
+    return
+  }
+  _setLbTransition(true)
+  _scheduleLbTransform()
+  _startLbInertia()
+}
+
+const showPrevLightboxImage = () => {
+  if (!lightboxImages.value.length) return
+  const total = lightboxImages.value.length
+  lightboxIndex.value = (lightboxIndex.value - 1 + total) % total
+  syncLightboxImageByIndex()
+}
+
+const showNextLightboxImage = () => {
+  if (!lightboxImages.value.length) return
+  const total = lightboxImages.value.length
+  lightboxIndex.value = (lightboxIndex.value + 1) % total
+  syncLightboxImageByIndex()
+}
+
+const onWindowKeydown = (event: KeyboardEvent) => {
+  if (!lightboxVisible.value) return
+  if (event.key === 'Escape') {
+    closeLightbox()
+    return
+  }
+  if (event.key === 'ArrowLeft') {
+    showPrevLightboxImage()
+    return
+  }
+  if (event.key === 'ArrowRight') {
+    showNextLightboxImage()
+    return
+  }
+  if (event.key === '+' || event.key === '=') {
+    zoomIn()
+    return
+  }
+  if (event.key === '-') {
+    zoomOut()
+    return
+  }
+  if (event.key === '0') {
+    resetLightboxZoom()
+  }
 }
 
 const onTocClick = (e: MouseEvent, id: string) => {
@@ -427,6 +1039,7 @@ watch(
 
 watch(renderedContent, async () => {
   await nextTick()
+  closeLightbox()
   buildToc()
   bindBodyImageLoadListener()
   setupCommentObserver()
@@ -442,14 +1055,22 @@ onMounted(() => {
   fetchArticle()
   window.addEventListener('scroll', requestScrollStateUpdate, { passive: true })
   window.addEventListener('resize', handleResize, { passive: true })
+  window.addEventListener('keydown', onWindowKeydown)
   requestScrollStateUpdate()
+})
+
+watch(lightboxVisible, (visible) => {
+  document.body.style.overflow = visible ? 'hidden' : ''
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', requestScrollStateUpdate)
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('keydown', onWindowKeydown)
   articleImageLoadAbortController?.abort()
+  articleImagePreviewAbortController?.abort()
   commentObserver?.disconnect()
+  document.body.style.overflow = ''
   if (resizeDebounceTimer !== null) {
     window.clearTimeout(resizeDebounceTimer)
     resizeDebounceTimer = null
@@ -457,6 +1078,19 @@ onBeforeUnmount(() => {
   if (scrollRafId !== null) {
     window.cancelAnimationFrame(scrollRafId)
     scrollRafId = null
+  }
+  if (_lbTransitionTimer !== null) {
+    window.clearTimeout(_lbTransitionTimer)
+    _lbTransitionTimer = null
+  }
+  if (_lbApplyRaf !== null) {
+    window.cancelAnimationFrame(_lbApplyRaf)
+    _lbApplyRaf = null
+  }
+  _stopLbInertia()
+  if (_lbPreloadTimer !== null) {
+    window.clearTimeout(_lbPreloadTimer)
+    _lbPreloadTimer = null
   }
 })
 </script>

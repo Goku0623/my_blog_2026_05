@@ -18,13 +18,6 @@ export interface TrendResponse {
   data: TrendItem[]
 }
 
-export interface ArticleStats {
-  id: number
-  title: string
-  view_count: number
-  comment_count: number
-}
-
 export interface CategoryStats {
   category_name: string
   article_count: number
@@ -36,6 +29,7 @@ export interface SystemHealth {
   redis: string
   celery: string
   uptime: string
+  started_at: string | null
 }
 
 export interface RecentComment {
@@ -43,6 +37,7 @@ export interface RecentComment {
   article_id: number
   article_title: string
   guest_name: string
+  guest_avatar?: string | null
   content: string
   created_at: string
 }
@@ -59,6 +54,7 @@ interface BackendSystemHealth {
   overall_status?: string
   services?: Array<{ service?: string; status?: string }>
   uptime?: string
+  started_at?: string | null
 }
 
 interface BackendApiMonitor {
@@ -76,6 +72,7 @@ interface BackendRecentComment {
   article_id?: number
   article_title?: string
   guest_name?: string
+  guest_avatar?: string | null
   content?: string
   created_at?: string
   guest?: {
@@ -86,39 +83,20 @@ interface BackendRecentComment {
   latest_comment_at?: string
 }
 
-export interface CeleryTaskStat {
-  task_name: string
-  total_count: number
-  success_count: number
-  fail_count: number
-  avg_duration: number
-}
-
-// 获取仪表盘统计数据
 export const getDashboardStats = () => {
   return request.get<{ data: DashboardStats }>('/admin/statistics/dashboard')
 }
 
-// 获取趋势数据
 export const getTrends = (metric: 'views' | 'comments' | 'articles' | 'visitors', period: 'day' | 'week' | 'month') => {
   return request.get<{ data: TrendResponse }>('/admin/statistics/trends', {
     params: { metric, period },
   })
 }
 
-// 获取热门文章排行
-export const getTopArticles = (limit: number = 10) => {
-  return request.get<{ data: ArticleStats[] }>('/admin/statistics/articles/top-viewed', {
-    params: { limit },
-  })
-}
-
-// 获取分类统计
 export const getCategoryStats = () => {
   return request.get<{ data: CategoryStats[] }>('/admin/statistics/categories/distribution')
 }
 
-// 获取系统健康状态
 export const getSystemHealth = () => {
   return request.get<{ data: BackendSystemHealth }>('/admin/statistics/health').then((response) => {
     const payload = response.data?.data ?? {}
@@ -136,6 +114,7 @@ export const getSystemHealth = () => {
       redis: redisStatus,
       celery: celeryStatus,
       uptime: payload.uptime || '-',
+      started_at: payload.started_at ?? null,
     }
 
     return {
@@ -148,7 +127,6 @@ export const getSystemHealth = () => {
   })
 }
 
-// 获取最近评论
 export const getRecentComments = (limit: number = 10) => {
   return request.get<{ data: BackendRecentComment[] }>('/admin/statistics/comments/recent', {
     params: { limit }
@@ -162,6 +140,7 @@ export const getRecentComments = (limit: number = 10) => {
       article_id: item.article_id ?? 0,
       article_title: item.article_title ?? '未命名文章',
       guest_name: displayGuestName,
+      guest_avatar: item.guest_avatar ?? null,
       content: item.content ?? '',
       created_at: item.created_at ?? item.latest_comment_at ?? new Date().toISOString(),
       }
@@ -176,7 +155,6 @@ export const getRecentComments = (limit: number = 10) => {
   })
 }
 
-// 获取 API 调用监控
 export const getApiMonitor = (hours: number = 24) => {
   return request.get<{ data: BackendApiMonitor | ApiMonitor[] }>('/admin/statistics/api-monitor', {
     params: { hours }
@@ -202,9 +180,4 @@ export const getApiMonitor = (hours: number = 24) => {
       },
     }
   })
-}
-
-// 获取 Celery 任务统计
-export const getCeleryStats = () => {
-  return request.get<{ data: CeleryTaskStat[] }>('/admin/statistics/celery')
 }

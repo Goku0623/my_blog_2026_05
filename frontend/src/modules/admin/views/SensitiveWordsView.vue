@@ -18,14 +18,37 @@
           <UInput v-model="form.word" placeholder="输入要屏蔽的关键词" />
         </div>
         <div class="space-y-1.5">
-          <label class="text-sm font-medium text-[var(--text-soft)]">严重等级</label>
-          <USelect v-model="form.level" :options="levelOptions" class="w-32" />
+          <label class="text-sm font-medium text-[var(--text-soft)]">分类（可选）</label>
+          <UInput v-model="form.category" placeholder="例如：广告/辱骂/政治" class="w-56" />
         </div>
         <UButton variant="primary" type="submit" :loading="adding">
           <template #icon><Plus class="size-4" /></template>
           添加
         </UButton>
       </form>
+    </UCard>
+
+    <UCard padding="md">
+      <div class="space-y-2">
+        <label class="text-sm font-medium text-[var(--text-soft)]">JSON 批量导入</label>
+        <UInput
+          v-model="importJsonText"
+          type="textarea"
+          :rows="9"
+          placeholder='[
+  { "word": "垃圾", "category": "辱骂" },
+  { "word": "博彩", "category": "广告" },
+  { "word": "敏感词示例" }
+]'
+        />
+        <p class="text-xs text-[var(--text-muted)]">
+          可直接复制示例 JSON 后修改。字段说明：`word` 必填，`category` 可选。
+        </p>
+        <div class="flex gap-2">
+          <UButton variant="outline" @click="fillImportExample">填入示例</UButton>
+          <UButton variant="primary" :loading="importing" @click="importWordsByJson">开始导入</UButton>
+        </div>
+      </div>
     </UCard>
 
     <UCard padding="none">
@@ -35,7 +58,7 @@
             <tr>
               <th class="px-4 py-2.5 text-left font-medium w-16">#</th>
               <th class="px-4 py-2.5 text-left font-medium">敏感词</th>
-              <th class="px-4 py-2.5 text-left font-medium w-32">等级</th>
+              <th class="px-4 py-2.5 text-left font-medium w-40">分类</th>
               <th class="px-4 py-2.5 text-left font-medium w-44">添加时间</th>
               <th class="px-4 py-2.5 text-right font-medium w-32">操作</th>
             </tr>
@@ -51,7 +74,7 @@
               <td class="px-4 py-3 text-[var(--text-muted)]">{{ idx + 1 }}</td>
               <td class="px-4 py-3 font-medium text-[var(--text)]">{{ w.word }}</td>
               <td class="px-4 py-3">
-                <UTag :variant="levelVariant(w.level)">{{ levelLabel(w.level) }}</UTag>
+                <UTag variant="info">{{ w.category || '未分类' }}</UTag>
               </td>
               <td class="px-4 py-3 text-[var(--text-soft)]">{{ formatDate(w.created_at) }}</td>
               <td class="px-4 py-3 text-right">
@@ -69,27 +92,24 @@
 import { reactive, ref, onMounted } from 'vue'
 import { Plus, RotateCcw } from 'lucide-vue-next'
 import {
-  getSensitiveWords, addSensitiveWord, deleteSensitiveWord, refreshSensitiveWordsCache,
+  getSensitiveWords, addSensitiveWord, importSensitiveWords, deleteSensitiveWord, refreshSensitiveWordsCache,
   type SensitiveWord,
 } from '@/api/system'
-import { UCard, UInput, USelect, UButton, UTag, UEmpty, USpinner, toast, confirmDialog } from '@/ui'
+import { UCard, UInput, UButton, UTag, UEmpty, USpinner, toast, confirmDialog } from '@/ui'
 
 const words = ref<SensitiveWord[]>([])
 const loading = ref(false)
 const refreshing = ref(false)
 const adding = ref(false)
+const importing = ref(false)
+const importJsonText = ref('')
 
-const form = reactive({ word: '', level: 'medium' as 'low' | 'medium' | 'high' })
-
-const levelOptions = [
-  { label: '低', value: 'low' },
-  { label: '中', value: 'medium' },
-  { label: '高', value: 'high' },
-]
-
-const levelLabel = (l: string) => ({ low: '低', medium: '中', high: '高' }[l] ?? l)
-const levelVariant = (l: string) =>
-  l === 'high' ? 'danger' : l === 'medium' ? 'warning' : 'info'
+const form = reactive({ word: '', category: '' })
+const importExampleJson = `[
+  { "word": "垃圾", "category": "辱骂" },
+  { "word": "博彩", "category": "广告" },
+  { "word": "敏感词示例" }
+]`
 
 const formatDate = (s: string) => {
   if (!s) return '-'
@@ -116,14 +136,70 @@ const addWord = async () => {
   }
   adding.value = true
   try {
-    await addSensitiveWord({ word: form.word.trim(), level: form.level })
+    await addSensitiveWord({
+      word: form.word.trim(),
+      category: form.category.trim() || undefined,
+    })
     toast.success('已添加')
     form.word = ''
+    form.category = ''
     await fetchWords()
   } catch {
     toast.error('添加失败')
   } finally {
     adding.value = false
+  }
+}
+
+const fillImportExample = () => {
+  importJsonText.value = importExampleJson
+}
+
+const importWordsByJson = async () => {
+  const text = importJsonText.value.trim()
+  if (!text) {
+    toast.warning('请先粘贴 JSON 内容')
+    return
+  }
+
+  let parsed: any
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    toast.error('JSON 格式不正确，请检查后重试')
+    return
+  }
+
+  if (!Array.isArray(parsed)) {
+    toast.error('JSON 顶层必须是数组')
+    return
+  }
+
+  const items = parsed
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => ({
+      word: String(item.word || '').trim(),
+      category: typeof item.category === 'string' ? item.category.trim() : undefined,
+    }))
+    .filter((item) => item.word)
+
+  if (!items.length) {
+    toast.warning('未识别到有效词条，请检查 word 字段')
+    return
+  }
+
+  importing.value = true
+  try {
+    const res = await importSensitiveWords(items)
+    const created = res.data?.data?.created ?? 0
+    const skipped = res.data?.data?.skipped ?? 0
+    toast.success(`导入完成：新增 ${created} 条，跳过 ${skipped} 条`)
+    await fetchWords()
+  } catch (error: any) {
+    const message = error?.response?.data?.message || '批量导入失败'
+    toast.error(message)
+  } finally {
+    importing.value = false
   }
 }
 

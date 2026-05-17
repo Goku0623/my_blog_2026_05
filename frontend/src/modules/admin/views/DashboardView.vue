@@ -78,7 +78,7 @@
           <HealthRow label="Redis" :status="health.redis" />
           <HealthRow label="Celery" :status="health.celery" />
           <div class="flex justify-between text-[var(--text-soft)]">
-            <span>运行时间</span><span class="text-[var(--text)]">{{ health.uptime }}</span>
+            <span>运行时间</span><span class="text-[var(--text)] tabular-nums transform-gpu will-change-[contents]">{{ liveUptime || health.uptime }}</span>
           </div>
         </div>
       </UCard>
@@ -99,7 +99,7 @@
             :key="c.id"
             class="px-5 py-3 flex gap-3 hover:bg-[var(--bg-muted)] transition-colors"
           >
-            <UAvatar :name="c.guest_name" :size="36" />
+            <UAvatar :src="c.guest_avatar || undefined" :name="c.guest_name" :size="36" />
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 text-sm">
                 <span class="font-medium text-[var(--text)]">{{ c.guest_name }}</span>
@@ -117,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart, BarChart } from 'echarts/charts'
@@ -152,6 +152,7 @@ const health = ref<SystemHealth>({
   redis: 'checking',
   celery: 'checking',
   uptime: '-',
+  started_at: null,
 })
 
 const recentComments = ref<RecentComment[]>([])
@@ -304,7 +305,6 @@ const writeDashboardCache = () => {
   try {
     sessionStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(payload))
   } catch {
-    // ignore cache write failure
   }
 }
 
@@ -365,5 +365,46 @@ onBeforeUnmount(() => {
     }
     idleTaskHandle = null
   }
+  if (uptimeTimer !== null) {
+    clearInterval(uptimeTimer)
+    uptimeTimer = null
+  }
+})
+
+const liveUptime = ref('')
+let uptimeTimer: ReturnType<typeof setInterval> | null = null
+
+const formatUptime = (totalSeconds: number) => {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const days = Math.floor(s / 86400)
+  const hours = Math.floor((s % 86400) / 3600)
+  const minutes = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  return `${days}d ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+}
+
+const startUptimeTimer = () => {
+  if (uptimeTimer !== null) return
+  const raw = health.value.started_at
+  if (!raw) return
+  const d = new Date(raw)
+  if (isNaN(d.getTime())) return
+  const startedMs = d.getTime()
+  liveUptime.value = formatUptime((Date.now() - startedMs) / 1000)
+  uptimeTimer = setInterval(() => {
+    liveUptime.value = formatUptime((Date.now() - startedMs) / 1000)
+  }, 1000)
+}
+
+const stopUptimeTimer = () => {
+  if (uptimeTimer !== null) {
+    clearInterval(uptimeTimer)
+    uptimeTimer = null
+  }
+}
+
+watch(() => health.value.started_at, (v) => {
+  stopUptimeTimer()
+  if (v) startUptimeTimer()
 })
 </script>

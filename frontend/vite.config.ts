@@ -54,6 +54,17 @@ export default defineConfig(({ mode }) => {
           target: 'http://127.0.0.1:8000',
           changeOrigin: true,
           ws: true,
+          timeout: 30000,
+          proxyTimeout: 30000,
+          configure: (proxy) => {
+            proxy.on('error', (err, _req, res) => {
+              console.warn('[vite proxy /api error]', err.message)
+              if (res && typeof (res as any).writeHead === 'function') {
+                ;(res as any).writeHead(502, { 'Content-Type': 'text/plain' })
+                ;(res as any).end('Proxy error: ' + err.message)
+              }
+            })
+          },
         },
         '/ws': {
           target: 'ws://127.0.0.1:8000',

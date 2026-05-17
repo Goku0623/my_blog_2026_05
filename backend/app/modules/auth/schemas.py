@@ -8,12 +8,9 @@ class AdminUserBase(BaseModel):
     email: Optional[EmailStr] = None
 
 
-class AdminUserCreate(AdminUserBase):
-    password: str = Field(..., min_length=6, max_length=100)
-
-
 class AdminUserOut(AdminUserBase):
     id: int
+    avatar: Optional[str] = None
     is_active: bool
     last_login_at: Optional[datetime]
     created_at: datetime
@@ -45,3 +42,4 @@ class ChangePasswordRequest(BaseModel):
 class UpdateProfileRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: Optional[EmailStr] = None
+    avatar: Optional[str] = Field(None, max_length=500000)

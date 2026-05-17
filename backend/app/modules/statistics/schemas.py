@@ -72,6 +72,7 @@ class SystemHealthResponse(BaseModel):
     services: list[HealthStatus]
     checked_at: datetime
     uptime: Optional[str] = None
+    started_at: Optional[datetime] = None
 
 
 class TopArticle(BaseModel):
@@ -92,6 +93,7 @@ class RecentCommentActivity(BaseModel):
     article_id: int
     article_title: str
     guest_name: Optional[str] = None
+    guest_avatar: Optional[str] = None
     content: Optional[str] = None
     created_at: Optional[datetime] = None
     comment_count: int

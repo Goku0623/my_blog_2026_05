@@ -53,6 +53,7 @@
             <div class="flex items-start gap-4">
               <UAvatar
                 :name="msg.guest_name"
+                :src="msg.guest_avatar || undefined"
                 :size="44"
                 class="shrink-0 min-w-11 min-h-11 rounded-full overflow-hidden ring-1 ring-[var(--border)] bg-[var(--bg-soft)]"
               />
@@ -103,7 +104,7 @@
 
           <div v-else class="p-5 sm:p-7 space-y-4">
             <div class="flex items-center gap-3">
-              <UAvatar :name="guestDisplayName" :size="40" />
+              <UAvatar :name="guestDisplayName" :src="siteStore.config.admin_avatar || undefined" :size="40" />
               <div class="flex flex-wrap items-center gap-2 text-sm min-w-0">
                 <span class="font-medium text-[var(--text)]">{{ guestDisplayName }}</span>
                 <span class="text-xs text-[var(--text-muted)]">写下你想说的话…</span>
@@ -169,6 +170,7 @@ import type { AxiosError } from 'axios'
 import { MessageCircle, Send } from 'lucide-vue-next'
 import { getGuestbookMessages, createGuestbookMessage, type GuestbookMessage } from '@/api/guestbook'
 import { useGuestStore } from '@/stores/guest'
+import { useSiteStore } from '@/stores/site'
 import { useAuthStore } from '@/stores/auth'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { UAvatar, UButton, UInput, UEmpty, USkeleton, UPagination, toast } from '@/ui'
@@ -176,6 +178,7 @@ import SiteNavbar from '../components/SiteNavbar.vue'
 import SiteFooter from '../components/SiteFooter.vue'
 
 const guestStore = useGuestStore()
+const siteStore = useSiteStore()
 const authStore = useAuthStore()
 const { render } = useMarkdown()
 
@@ -248,6 +251,13 @@ const initGuest = async () => {
   }
 }
 
+const getApiErrorMessage = (error: unknown, fallback: string) => {
+  const axiosError = error as AxiosError<{ message?: string; detail?: string }>
+  return axiosError.response?.data?.message
+    || axiosError.response?.data?.detail
+    || fallback
+}
+
 const submitMessage = async () => {
   if (!formContent.value.trim()) return
   try {
@@ -259,8 +269,7 @@ const submitMessage = async () => {
     currentPage.value = 1
     await fetchMessages()
   } catch (error) {
-    const axiosError = error as AxiosError<{ message?: string }>
-    const msg = axiosError.response?.data?.message || '留言失败，请稍后重试'
+    const msg = getApiErrorMessage(error, '留言失败，请稍后重试')
     toast.error(msg)
   } finally {
     submitting.value = false
@@ -288,7 +297,6 @@ onMounted(async () => {
   try {
     await guestStore.initGuest()
   } catch {
-    // 游客初始化失败不阻塞留言列表展示
   }
   await fetchMessages()
 })

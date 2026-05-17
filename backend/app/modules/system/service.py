@@ -1,6 +1,7 @@
 import json
 from typing import Optional, List, Dict, Set
 from datetime import datetime
+from tortoise.exceptions import IntegrityError
 
 from app.modules.system.models import SiteConfig, SensitiveWord, OperationLog, ScheduledTask
 from app.modules.auth.models import AdminUser
@@ -19,12 +20,14 @@ class SiteConfigService:
         "SITE_DESCRIPTION": ("基于 FastAPI + Vue3 的现代化博客系统", "str", "站点描述", True),
         "SITE_KEYWORDS": ("博客,技术,分享,Vue,FastAPI", "str", "站点关键词", True),
         "SITE_AUTHOR": ("博主", "str", "站点作者", True),
-        "SITE_LOGO": ("", "str", "站点Logo URL", True),
         "ICP_NUMBER": ("", "str", "ICP备案号", True),
         "COMMENT_ENABLED": ("true", "bool", "评论功能开关", True),
         "AI_ENABLED": ("true", "bool", "AI功能开关", True),
         "COMMENT_NEED_REVIEW": ("true", "bool", "评论需要审核", True),
         "COMMENT_RATE_LIMIT": ("5", "int", "评论速率限制（每分钟）", False),
+        "COMMENT_DAILY_LIMIT_PER_USER": ("2", "int", "评论：每用户每日上限（次）", False),
+        "COMMENT_DAILY_LIMIT_PER_ARTICLE_PER_USER": ("2", "int", "评论：每用户每篇文章每日上限（次）", False),
+        "GUESTBOOK_DAILY_LIMIT_PER_USER": ("2", "int", "留言墙：每用户每日上限（次）", False),
         "COVER_IMAGE_MAX_SIZE_MB": ("2", "int", "封面图最大体积（MB）", True),
         DEFAULT_ARTICLE_COVER_IMAGE_KEY: ("", "str", "默认文章封面图（支持 data URL 或 http(s) URL）", False),
         DEFAULT_ARTICLE_COVER_IMAGE_THUMB_KEY: ("", "str", "默认文章封面缩略图（16:9）", False),
@@ -35,14 +38,20 @@ class SiteConfigService:
         "WEATHER_API_KEY": ("", "str", "天气API密钥", False),
         "WEATHER_PROVIDER": ("amap", "str", "天气服务商 (amap/baidu/openweather)", False),
         "WEATHER_API_BASE_URL": ("", "str", "天气 API 地址（可选，覆盖默认地址）", False),
+        "N8N_ASSISTANT_WEBHOOK_URL": ("", "str", "AI 助手 N8N Webhook 地址", False),
+        "ASSISTANT_GUEST_DAILY_LIMIT": ("3", "int", "AI 助手游客每日提问上限（0 表示不限额）", False),
         "N8N_SECRET": ("", "str", "N8N Webhook密钥", False),
-        "ADMIN_EMAIL": ("", "str", "管理员邮箱", False),
+        "ADMIN_EMAIL": ("", "str", "管理员邮箱", True),
         "SMTP_HOST": ("", "str", "SMTP服务器地址", False),
         "SMTP_PORT": ("587", "int", "SMTP端口", False),
         "SMTP_USER": ("", "str", "SMTP用户名", False),
         "SMTP_PASSWORD": ("", "str", "SMTP密码", False),
         "SMTP_FROM": ("", "str", "发件人地址", False),
         "BACKUP_DIR": ("./backups", "str", "备份目录", False),
+        "N8N_BLOG_INGEST_WEBHOOK_URL": ("", "str", "博客文章入库 N8N Webhook 地址", False),
+        "SITE_URL": ("", "str", "站点完整 URL（例如 https://example.com）", False),
+        "GITHUB_URL": ("", "str", "GitHub 主页地址", True),
+        "BILIBILI_URL": ("", "str", "Bilibili 主页地址", True),
     }
 
     @staticmethod
@@ -80,17 +89,24 @@ class SiteConfigService:
         if not unique_keys:
             return {}
 
-        redis = await get_redis_client()
-        cache_keys = [f"config:{key}" for key in unique_keys]
-        cached_values = await redis.mget(cache_keys)
-
         result: Dict[str, Optional[str]] = {}
-        missing_keys: List[str] = []
-        for key, cached_value in zip(unique_keys, cached_values):
-            if cached_value is None:
-                missing_keys.append(key)
-            else:
-                result[key] = cached_value
+        missing_keys: List[str] = list(unique_keys)
+        redis = None
+
+        try:
+            redis = await get_redis_client()
+            if redis is not None and hasattr(redis, "mget"):
+                cache_keys = [f"config:{key}" for key in unique_keys]
+                cached_values = await redis.mget(cache_keys)
+                missing_keys = []
+                for key, cached_value in zip(unique_keys, cached_values):
+                    if cached_value is None:
+                        missing_keys.append(key)
+                    else:
+                        result[key] = cached_value
+        except Exception:
+            redis = None
+            missing_keys = list(unique_keys)
 
         if not missing_keys:
             return result
@@ -98,17 +114,32 @@ class SiteConfigService:
         configs = await SiteConfig.filter(key__in=missing_keys)
         db_map = {config.key: config.value for config in configs}
 
-        pipeline = redis.pipeline()
         has_cache_updates = False
+        pipeline = None
+        if redis is not None and hasattr(redis, "pipeline"):
+            try:
+                pipeline = redis.pipeline()
+            except Exception:
+                pipeline = None
+
         for key in missing_keys:
             value = db_map.get(key)
             result[key] = value
             if value is not None:
-                pipeline.setex(f"config:{key}", SiteConfigService.CONFIG_CACHE_TTL, value)
-                has_cache_updates = True
+                if pipeline is not None:
+                    pipeline.setex(f"config:{key}", SiteConfigService.CONFIG_CACHE_TTL, value)
+                    has_cache_updates = True
+                elif redis is not None and hasattr(redis, "setex"):
+                    try:
+                        await redis.setex(f"config:{key}", SiteConfigService.CONFIG_CACHE_TTL, value)
+                    except Exception:
+                        pass
 
-        if has_cache_updates:
-            await pipeline.execute()
+        if has_cache_updates and pipeline is not None:
+            try:
+                await pipeline.execute()
+            except Exception:
+                pass
 
         return result
 
@@ -197,7 +228,6 @@ class SiteConfigService:
 
         normalized_input = (value or "").strip()
         if normalized_input:
-            # 延迟导入，避免 system.service 与 articles.service 顶层循环依赖。
             from app.modules.articles.service import ArticleService
 
             normalized_cover = await ArticleService._normalize_cover_image(normalized_input) or ""
@@ -253,18 +283,29 @@ class SiteConfigService:
             except (TypeError, ValueError):
                 return default
 
+        admin_avatar = ""
+        try:
+            admin = await AdminUser.filter(is_active=True).order_by("id").first()
+            if admin and admin.avatar:
+                admin_avatar = admin.avatar
+        except Exception:
+            pass
+
         return {
             "site_name": _str("SITE_NAME", "我的博客"),
             "site_description": _str("SITE_DESCRIPTION", "一个现代化的博客系统"),
             "site_keywords": _str("SITE_KEYWORDS", "博客,技术,分享"),
             "site_author": _str("SITE_AUTHOR", "博主"),
-            "site_logo": _str("SITE_LOGO", ""),
             "icp_number": _str("ICP_NUMBER", ""),
             "admin_email": _str("ADMIN_EMAIL", ""),
+            "admin_avatar": admin_avatar,
             "comment_enabled": _bool("COMMENT_ENABLED", True),
             "comment_audit_enabled": _bool("COMMENT_NEED_REVIEW", True),
             "ai_enabled": _bool("AI_ENABLED", True),
             "cover_image_max_size_mb": max(1, min(20, _int("COVER_IMAGE_MAX_SIZE_MB", 2))),
+            "github_url": _str("GITHUB_URL", ""),
+            "bilibili_url": _str("BILIBILI_URL", ""),
+            "site_started_at": _str("SITE_STARTED_AT", ""),
         }
 
     @staticmethod
@@ -336,6 +377,54 @@ class SensitiveWordService:
         sensitive_word = await SensitiveWord.create(word=word, category=category)
         await SensitiveWordService.refresh_sensitive_words_cache()
         return sensitive_word
+
+    @staticmethod
+    async def bulk_import_sensitive_words(items: List[Dict[str, Optional[str]]]) -> Dict[str, int]:
+        created = 0
+        skipped = 0
+
+        normalized_items: List[Dict[str, Optional[str]]] = []
+        seen_words: Set[str] = set()
+        for item in items:
+            word = (item.get("word") or "").strip()
+            category = (item.get("category") or "").strip() or None
+            if not word:
+                skipped += 1
+                continue
+
+            dedupe_key = word.lower()
+            if dedupe_key in seen_words:
+                skipped += 1
+                continue
+            seen_words.add(dedupe_key)
+            normalized_items.append({"word": word, "category": category})
+
+        if not normalized_items:
+            return {"created": 0, "skipped": skipped}
+
+        existing_words = await SensitiveWord.filter(
+            word__in=[item["word"] for item in normalized_items]
+        ).values_list("word", flat=True)
+        existing_set = {word.lower() for word in existing_words}
+
+        for item in normalized_items:
+            word = item["word"] or ""
+            category = item.get("category")
+            if word.lower() in existing_set:
+                skipped += 1
+                continue
+
+            try:
+                await SensitiveWord.create(word=word, category=category)
+                created += 1
+                existing_set.add(word.lower())
+            except IntegrityError:
+                skipped += 1
+
+        if created > 0:
+            await SensitiveWordService.refresh_sensitive_words_cache()
+
+        return {"created": created, "skipped": skipped}
 
     @staticmethod
     async def delete_sensitive_word(word_id: int):
@@ -464,5 +553,51 @@ class ScheduledTaskService:
         task = await ScheduledTask.get_or_none(name=task_name)
         if not task:
             raise NotFoundException("定时任务不存在")
-        
+
         return {"message": f"任务 {task_name} 已触发执行"}
+
+
+class AdminNotificationService:
+    @staticmethod
+    async def create_notification(
+        type: str,
+        title: str,
+        content: Optional[str] = None,
+        link: Optional[str] = None,
+        source_id: Optional[int] = None,
+    ):
+        from app.modules.system.models import AdminNotification
+        await AdminNotification.create(
+            type=type,
+            title=title,
+            content=content,
+            link=link,
+            source_id=source_id,
+        )
+
+    @staticmethod
+    async def get_unread_count() -> int:
+        from app.modules.system.models import AdminNotification
+        return await AdminNotification.filter(is_read=False).count()
+
+    @staticmethod
+    async def list_notifications(page: int = 1, page_size: int = 20):
+        from app.modules.system.models import AdminNotification
+        query = AdminNotification.all().order_by("-created_at")
+        total = await query.count()
+        offset = (page - 1) * page_size
+        items = await query.offset(offset).limit(page_size)
+        return list(items), total
+
+    @staticmethod
+    async def mark_as_read(notification_id: int):
+        from app.modules.system.models import AdminNotification
+        notification = await AdminNotification.get_or_none(id=notification_id)
+        if notification:
+            notification.is_read = True
+            await notification.save()
+
+    @staticmethod
+    async def mark_all_as_read():
+        from app.modules.system.models import AdminNotification
+        await AdminNotification.filter(is_read=False).update(is_read=True)

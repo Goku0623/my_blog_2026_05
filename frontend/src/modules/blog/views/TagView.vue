@@ -90,7 +90,6 @@ const writeTagCache = (items: Tag[]) => {
     const payload: TagCachePayload = { timestamp: Date.now(), items }
     sessionStorage.setItem(TAG_CACHE_KEY, JSON.stringify(payload))
   } catch {
-    // ignore cache write failure
   }
 }
 

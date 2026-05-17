@@ -14,7 +14,7 @@ async def test_receive_n8n_article_success(client: AsyncClient, monkeypatch):
         title = "AI created article"
         status = "draft"
 
-    async def _mock_receive(payload):
+    async def _mock_receive(payload, n8n_secret):
         return DummyArticle()
 
     monkeypatch.setattr(service, "receive_n8n_article", _mock_receive)
@@ -27,7 +27,6 @@ async def test_receive_n8n_article_success(client: AsyncClient, monkeypatch):
             "summary": "summary",
             "category_name": "AI",
             "tags": ["python"],
-            "n8n_secret": "secret",
         },
         headers={"X-N8N-Secret": "secret"},
     )
@@ -45,7 +44,6 @@ async def test_receive_n8n_article_missing_secret(client: AsyncClient):
             "summary": "summary",
             "category_name": "AI",
             "tags": ["python"],
-            "n8n_secret": "",
         },
     )
     assert response.status_code == 401

@@ -9,6 +9,10 @@ export const useSiteStore = defineStore('site', () => {
     site_keywords: '博客,技术,分享',
     site_author: '博主',
     admin_email: '',
+    admin_avatar: '',
+    github_url: '',
+    bilibili_url: '',
+    site_started_at: '',
     comment_enabled: true,
     comment_audit_enabled: true,
     ai_enabled: true,
@@ -32,7 +36,6 @@ export const useSiteStore = defineStore('site', () => {
     }
   }
 
-  // 更新站点配置（本地更新，不调用 API）
   const updateConfig = (newConfig: Partial<SiteConfig>) => {
     config.value = { ...config.value, ...newConfig }
   }

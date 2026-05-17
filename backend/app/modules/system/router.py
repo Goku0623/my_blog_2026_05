@@ -6,11 +6,14 @@ from app.modules.system.schemas import (
     SiteConfigUpdate,
     SiteConfigBulkUpdate,
     SensitiveWordCreate,
+    SensitiveWordBulkImportRequest,
     SensitiveWordOut,
     OperationLogOut,
     OperationLogFilter,
     ScheduledTaskOut,
     ScheduledTaskUpdate,
+    AdminNotificationOut,
+    AdminNotificationUnreadCount,
 )
 from app.modules.system.service import (
     SiteConfigService,
@@ -18,6 +21,7 @@ from app.modules.system.service import (
     SensitiveWordService,
     OperationLogService,
     ScheduledTaskService,
+    AdminNotificationService,
 )
 from app.modules.auth.models import AdminUser
 from app.core.dependencies import get_current_admin, get_client_ip
@@ -78,26 +82,77 @@ async def list_sensitive_words(
 @router.post("/admin/system/sensitive-words", response_model=dict)
 async def create_sensitive_word(
     word_data: SensitiveWordCreate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     word = await SensitiveWordService.create_sensitive_word(word_data.word, word_data.category)
+    await OperationLogService.log_operation(
+        operator=current_admin.username,
+        action="sensitive_word_create",
+        target_type="sensitive_word",
+        target_id=word.id,
+        detail=f"创建敏感词：{word.word}",
+        ip=get_client_ip(request),
+        result="success",
+    )
     return success(SensitiveWordOut.model_validate(word), "创建敏感词成功")
+
+
+@router.post("/admin/system/sensitive-words/import", response_model=dict)
+async def import_sensitive_words(
+    payload: SensitiveWordBulkImportRequest,
+    request: Request,
+    current_admin: AdminUser = Depends(get_current_admin),
+):
+    result = await SensitiveWordService.bulk_import_sensitive_words(
+        [item.model_dump() for item in payload.items]
+    )
+    await OperationLogService.log_operation(
+        operator=current_admin.username,
+        action="sensitive_word_import",
+        target_type="sensitive_word",
+        target_id=None,
+        detail=f"批量导入敏感词，成功 {result.get('created', 0)} 条，跳过 {result.get('skipped', 0)} 条",
+        ip=get_client_ip(request),
+        result="success",
+    )
+    return success(result, "批量导入敏感词成功")
 
 
 @router.delete("/admin/system/sensitive-words/{word_id}", response_model=dict)
 async def delete_sensitive_word(
     word_id: int,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     await SensitiveWordService.delete_sensitive_word(word_id)
+    await OperationLogService.log_operation(
+        operator=current_admin.username,
+        action="sensitive_word_delete",
+        target_type="sensitive_word",
+        target_id=word_id,
+        detail=f"删除敏感词 #{word_id}",
+        ip=get_client_ip(request),
+        result="success",
+    )
     return success(None, "删除敏感词成功")
 
 
 @router.post("/admin/system/sensitive-words/refresh-cache", response_model=dict)
 async def refresh_sensitive_words_cache(
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     await SensitiveWordService.refresh_sensitive_words_cache()
+    await OperationLogService.log_operation(
+        operator=current_admin.username,
+        action="sensitive_word_refresh_cache",
+        target_type="sensitive_word",
+        target_id=None,
+        detail="刷新敏感词缓存",
+        ip=get_client_ip(request),
+        result="success",
+    )
     return success(None, "刷新敏感词缓存成功")
 
 
@@ -146,6 +201,7 @@ async def list_scheduled_tasks(
 async def update_scheduled_task(
     task_id: int,
     update_data: ScheduledTaskUpdate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     task = await ScheduledTaskService.update_task(
@@ -153,12 +209,22 @@ async def update_scheduled_task(
         update_data.is_active,
         update_data.cron_expression
     )
+    await OperationLogService.log_operation(
+        operator=current_admin.username,
+        action="scheduled_task_update",
+        target_type="scheduled_task",
+        target_id=task.id,
+        detail=f"更新定时任务：{task.name}",
+        ip=get_client_ip(request),
+        result="success",
+    )
     return success(ScheduledTaskOut.model_validate(task), "更新定时任务成功")
 
 
 @router.post("/admin/system/tasks/{task_id}/trigger", response_model=dict)
 async def trigger_scheduled_task(
     task_id: int,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     task = await ScheduledTaskService.list_tasks()
@@ -168,6 +234,55 @@ async def trigger_scheduled_task(
         raise NotFoundException("定时任务不存在")
     
     result = await ScheduledTaskService.trigger_task_manually(target_task.name)
+    await OperationLogService.log_operation(
+        operator=current_admin.username,
+        action="scheduled_task_trigger",
+        target_type="scheduled_task",
+        target_id=task_id,
+        detail=f"手动触发定时任务：{target_task.name}",
+        ip=get_client_ip(request),
+        result="success",
+    )
     return success(result, "触发定时任务成功")
+
+
+@router.get("/admin/system/notifications", response_model=dict)
+async def list_admin_notifications(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    current_admin: AdminUser = Depends(get_current_admin),
+):
+    items, total = await AdminNotificationService.list_notifications(page, page_size)
+    return success({
+        "items": [AdminNotificationOut.model_validate(n).model_dump() for n in items],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    })
+
+
+@router.get("/admin/system/notifications/unread-count", response_model=dict)
+async def get_unread_notification_count(
+    current_admin: AdminUser = Depends(get_current_admin),
+):
+    count = await AdminNotificationService.get_unread_count()
+    return success(AdminNotificationUnreadCount(count=count).model_dump())
+
+
+@router.put("/admin/system/notifications/{notification_id}/read", response_model=dict)
+async def mark_notification_read(
+    notification_id: int,
+    current_admin: AdminUser = Depends(get_current_admin),
+):
+    await AdminNotificationService.mark_as_read(notification_id)
+    return success(None, "已标记为已读")
+
+
+@router.put("/admin/system/notifications/read-all", response_model=dict)
+async def mark_all_notifications_read(
+    current_admin: AdminUser = Depends(get_current_admin),
+):
+    await AdminNotificationService.mark_all_as_read()
+    return success(None, "已全部标记为已读")
 
 

@@ -63,7 +63,7 @@
               <td class="px-4 py-3 text-[var(--text-muted)]">{{ row.id }}</td>
               <td class="px-4 py-3">
                 <div class="flex items-center gap-2">
-                  <UAvatar :name="row.guest_name" :size="28" />
+                  <UAvatar :src="row.guest_avatar || undefined" :name="row.guest_name" :size="28" />
                   <span class="text-[var(--text)]">{{ row.guest_name }}</span>
                 </div>
               </td>

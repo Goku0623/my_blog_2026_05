@@ -8,6 +8,7 @@ class GuestIdentityOut(BaseModel):
     id: int
     guest_token: str
     nickname: Optional[str]
+    avatar: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -45,13 +46,6 @@ class CommentOut(BaseModel):
     replies: List["CommentOut"] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class CommentListResponse(BaseModel):
-    items: List[CommentOut]
-    total: int
-    page: int
-    page_size: int
 
 
 class AdminCommentAction(BaseModel):

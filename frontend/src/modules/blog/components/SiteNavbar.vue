@@ -8,8 +8,9 @@
         <!-- Logo -->
         <router-link to="/" class="flex min-w-0 items-center gap-3 shrink-0 group">
           <span
-            class="relative grid place-items-center size-9 sm:size-10 rounded-xl bg-gradient-to-br from-[var(--brand)] via-[#9333ea] to-[var(--accent)] text-white font-bold text-sm shadow-[var(--shadow-md)] ring-1 ring-white/30 dark:ring-white/10 transition-transform duration-300 group-hover:scale-[1.04]">
-            {{ initialChar }}
+            class="relative grid place-items-center size-9 sm:size-10 rounded-xl bg-gradient-to-br from-[var(--brand)] via-[#9333ea] to-[var(--accent)] text-white font-bold text-sm shadow-[var(--shadow-md)] ring-1 ring-white/30 dark:ring-white/10 transition-transform duration-300 group-hover:scale-[1.04] overflow-hidden">
+            <img v-if="siteStore.config.admin_avatar" :src="siteStore.config.admin_avatar" alt="" class="size-full object-cover" />
+            <span v-else>{{ initialChar }}</span>
             <span
               class="absolute -inset-2 rounded-2xl bg-gradient-to-br from-[var(--brand)] to-[var(--accent)] opacity-0 blur-xl transition-opacity duration-500 group-hover:opacity-30"></span>
           </span>
@@ -106,14 +107,25 @@
         <Rocket class="size-7" />
       </router-link>
     </Teleport>
+
+    <Teleport to="body">
+      <button aria-label="打开 AI 助手"
+        class="fixed left-10 bottom-10 z-[90] inline-flex size-18 items-center justify-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--accent)] text-white shadow-[var(--shadow-lg)] transition-all hover:scale-[1.06] hover:shadow-[var(--shadow-xl)] active:scale-95"
+        @click="assistantPanelOpen = true">
+        <Bot class="size-7" />
+      </button>
+    </Teleport>
+
+    <AssistantChatPanel :visible="assistantPanelOpen" @close="assistantPanelOpen = false" />
   </header>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Sun, Moon, Settings, Search, Menu, X, Rocket } from 'lucide-vue-next'
+import { Sun, Moon, Settings, Search, Menu, X, Rocket, Bot } from 'lucide-vue-next'
 import { useSiteStore } from '@/stores/site'
+import AssistantChatPanel from './AssistantChatPanel.vue'
 
 const siteStore = useSiteStore()
 const route = useRoute()
@@ -144,6 +156,7 @@ const toggleTheme = () => {
 
 const scrolled = ref(false)
 const mobileMenuOpen = ref(false)
+const assistantPanelOpen = ref(false)
 let scrollRafId: number | null = null
 
 const handleScroll = () => {
@@ -165,6 +178,7 @@ const handleKey = (e: KeyboardEvent) => {
 
 watch(() => route.fullPath, () => {
   mobileMenuOpen.value = false
+  assistantPanelOpen.value = false
 })
 
 onMounted(() => {

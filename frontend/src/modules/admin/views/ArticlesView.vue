@@ -60,7 +60,8 @@
             <tr
               v-for="row in articles"
               :key="row.id"
-              class="hover:bg-[var(--bg-muted)] transition-colors"
+              class="hover:bg-[var(--bg-muted)] transition-colors cursor-pointer"
+              @click="$router.push(`/admin/articles/edit/${row.id}`)"
             >
               <td class="px-4 py-3 text-[var(--text-muted)]">{{ row.id }}</td>
               <td class="px-4 py-3 text-[var(--text)] font-medium">{{ row.title }}</td>
@@ -78,21 +79,25 @@
               </td>
               <td class="px-4 py-3 text-center text-[var(--text-soft)]">{{ row.view_count }}</td>
               <td class="px-4 py-3 text-center text-xs text-[var(--text-muted)]">
-                {{ formatDateTime(row.published_at || row.created_at) }}
+                {{
+                  row.status === 'draft' && row.scheduled_publish_at
+                    ? `计划：${formatDateTime(row.scheduled_publish_at)}`
+                    : formatDateTime(row.published_at || row.created_at)
+                }}
               </td>
               <td class="px-4 py-3 text-right">
                 <div class="inline-flex gap-1">
                   <button
                     class="text-xs px-2 py-1 rounded hover:bg-[var(--brand-soft)] text-[var(--brand)]"
-                    @click="$router.push(`/admin/articles/edit/${row.id}`)"
+                    @click.stop="$router.push(`/admin/articles/edit/${row.id}`)"
                   >编辑</button>
                   <button
                     :class="['text-xs px-2 py-1 rounded', row.status === 'published' ? 'hover:bg-amber-50 text-amber-600' : 'hover:bg-emerald-50 text-emerald-600']"
-                    @click="handleToggleStatus(row)"
+                    @click.stop="handleToggleStatus(row)"
                   >{{ row.status === 'published' ? '下架' : '发布' }}</button>
                   <button
                     class="text-xs px-2 py-1 rounded hover:bg-rose-50 text-rose-500"
-                    @click="handleDelete(row)"
+                    @click.stop="handleDelete(row)"
                   >删除</button>
                 </div>
               </td>
@@ -213,7 +218,6 @@ const writeArticleListCache = () => {
   try {
     sessionStorage.setItem(ARTICLE_LIST_CACHE_KEY, JSON.stringify(payload))
   } catch {
-    // ignore cache write failure
   }
 }
 
@@ -257,7 +261,6 @@ const prefetchNextPage = async (pageTotal: number) => {
     const nextTotal = res.data?.data?.total ?? pageTotal
     writePrefetchedPage(nextPage, nextItems, nextTotal)
   } catch {
-    // prefetch failure should not affect UI
   }
 }
 

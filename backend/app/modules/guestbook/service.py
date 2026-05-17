@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from typing import List, Optional
 from datetime import datetime
 import markdown
@@ -13,23 +14,49 @@ from app.modules.system.models import OperationLog
 from app.modules.system.service import SensitiveWordService, FeatureSwitchService
 
 
-async def check_guestbook_rate_limit(guest_token: str, redis: Redis) -> bool:
-    key = f"guestbook_rate_limit:{guest_token}"
-    window = 86400
-    limit = 3
+def build_visitor_fingerprint(ip: str, user_agent: str) -> str:
+    normalized_ip = (ip or "unknown").strip()
+    normalized_ua = (user_agent or "unknown").strip().lower()
+    raw = f"{normalized_ip}|{normalized_ua}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    now = datetime.now().timestamp()
 
-    await redis.zremrangebyscore(key, 0, now - window)
+async def _get_config_int(key: str, default: int) -> int:
+    from app.modules.system.models import SiteConfig
+    import os
 
-    count = await redis.zcard(key)
-    if count >= limit:
-        raise BusinessException(429, "留言过于频繁，每位游客每天最多留言 3 条，请明天再来")
+    config = await SiteConfig.get_or_none(key=key)
+    value = config.value if config and config.value not in (None, "") else os.getenv(key, str(default))
+    try:
+        return max(0, int(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
 
-    await redis.zadd(key, {str(now): now})
-    await redis.expire(key, window)
 
-    return True
+async def check_guestbook_rate_limit(guest: GuestIdentity, redis: Redis) -> None:
+    per_user_limit = await _get_config_int("GUESTBOOK_DAILY_LIMIT_PER_USER", 2)
+    if per_user_limit == 0:
+        return
+
+    today = datetime.now().strftime("%Y%m%d")
+    ttl_seconds = 2 * 24 * 60 * 60
+    keys_to_check = [f"guestbook_daily:token:{guest.guest_token}:{today}"]
+
+    is_guest_user = not (guest.guest_token or "").startswith("admin-")
+    if is_guest_user:
+        fingerprint = build_visitor_fingerprint(guest.ip_address, guest.user_agent or "")
+        keys_to_check.append(f"guestbook_daily:fp:{fingerprint}:{today}")
+
+    for key in keys_to_check:
+        current_raw = await redis.get(key)
+        current = int(current_raw) if current_raw is not None else 0
+        if current >= per_user_limit:
+            raise BusinessException(429, f"您每天至多留言{per_user_limit}条，明天再来吧")
+
+    for key in keys_to_check:
+        new_count = await redis.incr(key)
+        if new_count == 1:
+            await redis.expire(key, ttl_seconds)
 
 
 async def render_markdown_content(content: str) -> str:
@@ -97,14 +124,15 @@ async def create_message(
 
     guest = await resolve_message_guest_identity(guest, admin)
 
-    await check_guestbook_rate_limit(guest.guest_token, redis)
-
     words = await SensitiveWordService.get_sensitive_words_cached()
     normalized = data.content.lower()
     for word in words:
         clean = word.strip()
         if clean and clean.lower() in normalized:
             raise BadRequestException(f"内容包含敏感词：{word}")
+
+    if not admin:
+        await check_guestbook_rate_limit(guest, redis)
 
     rendered = await render_markdown_content(data.content)
 

@@ -7,9 +7,18 @@ class N8NArticlePayload(BaseModel):
     title: str
     content: str
     summary: Optional[str] = None
+    status: Optional[str] = Field(default="draft")
+    category_id: Optional[int] = None
     category_name: Optional[str] = None
+    tag_ids: List[int] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
-    n8n_secret: str
+    cover_image: Optional[str] = None
+    seo_title: Optional[str] = None
+    seo_description: Optional[str] = None
+    seo_keywords: Optional[str] = None
+    scheduled_publish_at: Optional[datetime] = None
+    is_featured: bool = False
+    allow_comment: bool = True
 
 
 class N8NArticleResponse(BaseModel):

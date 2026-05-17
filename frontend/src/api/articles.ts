@@ -33,6 +33,7 @@ export interface Article {
   status: string
   is_featured?: boolean
   is_published?: boolean
+  scheduled_publish_at?: string
   published_at?: string
   created_at: string
   updated_at: string
@@ -85,22 +86,18 @@ export interface TagPayload {
   color?: string
 }
 
-// 获取文章列表（前台）
 export const getArticles = (params: ArticleListParams) => {
   return request.get<{ data: ArticleListResponse }>('/articles', { params })
 }
 
-// 获取文章统计概览（前台）
 export const getArticleStatsSummary = () => {
   return request.get<{ data: ArticleStatsSummary }>('/articles/stats/summary')
 }
 
-// 获取文章详情（前台）
 export const getArticle = (slug: string) => {
   return request.get<{ data: Article }>(`/articles/${slug}`)
 }
 
-// 搜索文章（支持字段与时间筛选）
 export const searchArticles = (params: {
   keyword: string
   page?: number
@@ -111,89 +108,72 @@ export const searchArticles = (params: {
   return request.get<{ data: ArticleListResponse }>('/articles/search', { params })
 }
 
-// 获取所有分类
 export const getCategories = () => {
   return request.get<{ data: Category[] }>('/categories')
 }
 
-// 获取所有标签
 export const getTags = () => {
   return request.get<{ data: Tag[] }>('/tags')
 }
 
-// 管理端：获取文章列表
 export const getAdminArticles = (params: ArticleListParams) => {
   return request.get<{ data: ArticleListResponse }>('/admin/articles', { params })
 }
 
-// 管理端：获取文章详情
 export const getAdminArticle = (id: number) => {
   return request.get<{ data: Article }>(`/admin/articles/${id}`)
 }
 
-// 管理端：创建文章
 export const createArticle = (data: Partial<Article>) => {
   return request.post<{ data: Article }>('/admin/articles', data)
 }
 
-// 管理端：更新文章
 export const updateArticle = (id: number, data: Partial<Article>) => {
   return request.put<{ data: Article }>(`/admin/articles/${id}`, data)
 }
 
-// 管理端：删除文章
 export const deleteArticle = (id: number, hardDelete: boolean = true) => {
   return request.delete(`/admin/articles/${id}`, {
     params: { hard_delete: hardDelete },
   })
 }
 
-// 管理端：发布文章
 export const publishArticle = (id: number) => {
   return request.post(`/admin/articles/${id}/publish`)
 }
 
-// 管理端：取消发布文章
 export const unpublishArticle = (id: number) => {
   return request.post(`/admin/articles/${id}/unpublish`)
 }
 
-// 管理端：从已发布文章保存/更新草稿副本
 export const saveArticleDraftCopy = (id: number, data: Partial<Article>) => {
   return request.post<{ data: Article }>(`/admin/articles/${id}/draft`, data)
 }
 
-// 管理端：将草稿副本发布回原文并删除草稿
 export const publishDraftToSource = (draftId: number) => {
   return request.post<{ data: { id: number; status: string } }>(`/admin/articles/drafts/${draftId}/publish`)
 }
 
-// 管理端：创建分类
 export const createCategory = (data: CategoryPayload) => {
   return request.post('/admin/categories', data)
 }
 
-// 管理端：更新分类
 export const updateCategory = (id: number, data: Partial<CategoryPayload>) => {
   return request.put(`/admin/categories/${id}`, data)
 }
 
-// 管理端：删除分类
 export const deleteCategory = (id: number) => {
   return request.delete(`/admin/categories/${id}`)
 }
 
-// 管理端：创建标签
 export const createTag = (data: TagPayload) => {
   return request.post('/admin/tags', data)
 }
 
-// 管理端：更新标签
 export const updateTag = (id: number, data: Partial<TagPayload>) => {
   return request.put(`/admin/tags/${id}`, data)
 }
 
-// 管理端：删除标签
 export const deleteTag = (id: number) => {
   return request.delete(`/admin/tags/${id}`)
 }

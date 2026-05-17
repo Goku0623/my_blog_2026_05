@@ -10,8 +10,8 @@ celery_app = Celery(
         "app.tasks.backup_tasks",
         "app.tasks.cache_tasks",
         "app.tasks.ai_tasks",
-        "app.tasks.notification_tasks",
         "app.tasks.statistics_tasks",
+        "app.tasks.articles_tasks",
     ],
 )
 
@@ -41,6 +41,14 @@ celery_app.conf.update(
         "clear-expired-views": {
             "task": "cache.clear_expired_article_views",
             "schedule": crontab(hour=1, minute=0),
+        },
+        "publish-due-scheduled-articles": {
+            "task": "articles.publish_due_scheduled",
+            "schedule": crontab(minute="*/1"),
+        },
+        "clear-old-operation-logs": {
+            "task": "cache.clear_old_operation_logs",
+            "schedule": crontab(hour=4, minute=0, day_of_month=1),
         },
     },
 )

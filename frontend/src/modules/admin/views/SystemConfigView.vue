@@ -34,40 +34,21 @@
           <Field label="站点作者">
             <UInput v-model="form.SITE_AUTHOR" />
           </Field>
-          <Field label="站点 Logo">
-            <UInput v-model="form.SITE_LOGO" placeholder="图片 URL" />
-          </Field>
           <Field label="默认文章封面图">
-            <UInput
-              v-model="defaultCoverImageUrl"
-              placeholder="图片 URL（可选，保存时自动转换）"
-            />
+            <UInput v-model="defaultCoverImageUrl" placeholder="图片 URL（可选，保存时自动转换）" />
             <div class="mt-2 flex flex-wrap gap-2">
-              <input
-                ref="defaultCoverInputRef"
-                type="file"
-                accept="image/*"
-                class="hidden"
-                @change="handleDefaultCoverFileChange"
-              />
+              <input ref="defaultCoverInputRef" type="file" accept="image/*" class="hidden"
+                @change="handleDefaultCoverFileChange" />
               <UButton variant="outline" @click="handleSelectDefaultCover">
                 <template #icon>
                   <ImagePlus class="size-4" />
                 </template>
                 选择图片
               </UButton>
-              <UButton
-                variant="outline"
-                :disabled="!defaultCoverImageUrl.trim()"
-                @click="handleConvertDefaultCoverUrl"
-              >
+              <UButton variant="outline" :disabled="!defaultCoverImageUrl.trim()" @click="handleConvertDefaultCoverUrl">
                 从 URL 转换
               </UButton>
-              <UButton
-                v-if="defaultCoverPreview"
-                variant="ghost"
-                @click="clearDefaultCover"
-              >
+              <UButton v-if="defaultCoverPreview" variant="ghost" @click="clearDefaultCover">
                 <template #icon>
                   <Trash2 class="size-4" />
                 </template>
@@ -77,11 +58,8 @@
             <p class="mt-1 text-xs text-[var(--text-muted)]">
               支持本地上传或 URL，保存后将自动生成 16:9 缩略图；最大约 {{ defaultCoverMaxSizeMb }}MB
             </p>
-            <img
-              v-if="defaultCoverPreview"
-              :src="defaultCoverPreview"
-              class="mt-2 w-full max-h-40 object-cover rounded-lg border border-[var(--border)]"
-            />
+            <img v-if="defaultCoverPreview" :src="defaultCoverPreview"
+              class="mt-2 w-full max-h-40 object-cover rounded-lg border border-[var(--border)]" />
           </Field>
           <Field label="ICP 备案号">
             <UInput v-model="form.ICP_NUMBER" placeholder="例如：京ICP备xxxxxx号" />
@@ -103,6 +81,24 @@
             <div class="flex items-center gap-2">
               <UInput v-model="form.COMMENT_RATE_LIMIT" type="number" class="w-32" />
               <span class="text-sm text-[var(--text-muted)]">条 / 分钟</span>
+            </div>
+          </Field>
+          <Field label="评论每日上限（每用户）">
+            <div class="flex items-center gap-2">
+              <UInput v-model="form.COMMENT_DAILY_LIMIT_PER_USER" type="number" class="w-32" />
+              <span class="text-sm text-[var(--text-muted)]">条 / 天（0 表示不限额）</span>
+            </div>
+          </Field>
+          <Field label="评论每日上限（每文章每用户）">
+            <div class="flex items-center gap-2">
+              <UInput v-model="form.COMMENT_DAILY_LIMIT_PER_ARTICLE_PER_USER" type="number" class="w-32" />
+              <span class="text-sm text-[var(--text-muted)]">条 / 天（0 表示不限额）</span>
+            </div>
+          </Field>
+          <Field label="留言墙每日上限（每用户）">
+            <div class="flex items-center gap-2">
+              <UInput v-model="form.GUESTBOOK_DAILY_LIMIT_PER_USER" type="number" class="w-32" />
+              <span class="text-sm text-[var(--text-muted)]">条 / 天（0 表示不限额）</span>
             </div>
           </Field>
           <Field label="封面图最大体积">
@@ -137,7 +133,60 @@
           <Field label="天气 API 地址">
             <UInput v-model="form.WEATHER_API_BASE_URL" placeholder="可选，默认留空使用内置地址" />
           </Field>
+          <Field label="助手 Webhook URL">
+            <UInput v-model="form.N8N_ASSISTANT_WEBHOOK_URL" placeholder="https://your-n8n/webhook/assistant-chat" />
+          </Field>
+          <Field label="X-N8N-Secret">
+            <UInput v-model="form.N8N_SECRET" type="password"
+              placeholder="用于 /ai/n8n/article 与 /assistant/chat 的 X-N8N-Secret" />
+          </Field>
+          <Field label="游客每日提问限额">
+            <div class="flex items-center gap-2">
+              <UInput v-model="form.ASSISTANT_GUEST_DAILY_LIMIT" type="number" class="w-32" />
+              <span class="text-sm text-[var(--text-muted)]">次 / 天（0 表示不限额）</span>
+            </div>
+          </Field>
         </div>
+      </UCard>
+
+      <!-- N8N 博客入库配置 -->
+      <UCard padding="md" class="lg:col-span-2">
+        <template #header>
+          <div class="flex items-center gap-2 font-semibold">
+            <Globe class="size-4 text-[var(--brand)]" /> N8N 博客文章入库
+          </div>
+        </template>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="Blog Ingest Webhook URL">
+            <UInput v-model="form.N8N_BLOG_INGEST_WEBHOOK_URL" placeholder="https://your-n8n/webhook/blog-ingest" />
+          </Field>
+          <Field label="站点 URL">
+            <UInput v-model="form.SITE_URL" placeholder="https://example.com" />
+          </Field>
+        </div>
+        <p class="mt-3 text-xs text-[var(--text-muted)]">
+          当文章发布或更新时，自动将文章内容发送到 N8N Webhook 存入向量数据库。密钥沿用 X-N8N-Secret。
+        </p>
+      </UCard>
+
+      <!-- 社交链接 -->
+      <UCard padding="md" class="lg:col-span-2">
+        <template #header>
+          <div class="flex items-center gap-2 font-semibold">
+            <Link class="size-4 text-[var(--brand)]" /> 社交链接
+          </div>
+        </template>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="GitHub URL">
+            <UInput v-model="form.GITHUB_URL" placeholder="https://github.com/yourname" />
+          </Field>
+          <Field label="Bilibili URL">
+            <UInput v-model="form.BILIBILI_URL" placeholder="https://space.bilibili.com/xxxxx" />
+          </Field>
+        </div>
+        <p class="mt-3 text-xs text-[var(--text-muted)]">
+          设置后在"关于我"页面可点击跳转。邮箱使用上方邮件配置中的管理员邮箱。
+        </p>
       </UCard>
 
       <!-- 邮件配置 -->
@@ -174,7 +223,7 @@
 
 <script setup lang="ts">
 import { reactive, onMounted, ref, computed, h } from 'vue'
-import { Save, Settings, ToggleRight, Cpu, Mail, ImagePlus, Trash2 } from 'lucide-vue-next'
+import { Save, Settings, ToggleRight, Cpu, Mail, ImagePlus, Trash2, Globe, Link } from 'lucide-vue-next'
 import { getAdminConfigs, bulkUpdateConfigs } from '@/api/system'
 import { UCard, UInput, UButton, USwitch, toast } from '@/ui'
 
@@ -203,22 +252,31 @@ interface ConfigForm {
   SITE_DESCRIPTION: string
   SITE_KEYWORDS: string
   SITE_AUTHOR: string
-  SITE_LOGO: string
   DEFAULT_ARTICLE_COVER_IMAGE: string
   ICP_NUMBER: string
   COMMENT_RATE_LIMIT: string
+  COMMENT_DAILY_LIMIT_PER_USER: string
+  COMMENT_DAILY_LIMIT_PER_ARTICLE_PER_USER: string
+  GUESTBOOK_DAILY_LIMIT_PER_USER: string
   COVER_IMAGE_MAX_SIZE_MB: string
   AI_API_KEY: string
   AI_BASE_URL: string
   AI_MODEL: string
   WEATHER_API_KEY: string
   WEATHER_API_BASE_URL: string
+  N8N_ASSISTANT_WEBHOOK_URL: string
+  N8N_SECRET: string
+  ASSISTANT_GUEST_DAILY_LIMIT: string
   ADMIN_EMAIL: string
   SMTP_HOST: string
   SMTP_PORT: string
   SMTP_USER: string
   SMTP_PASSWORD: string
   SMTP_FROM: string
+  N8N_BLOG_INGEST_WEBHOOK_URL: string
+  SITE_URL: string
+  GITHUB_URL: string
+  BILIBILI_URL: string
 }
 
 const form = reactive<ConfigForm>({
@@ -226,22 +284,31 @@ const form = reactive<ConfigForm>({
   SITE_DESCRIPTION: '',
   SITE_KEYWORDS: '',
   SITE_AUTHOR: '',
-  SITE_LOGO: '',
   DEFAULT_ARTICLE_COVER_IMAGE: '',
   ICP_NUMBER: '',
   COMMENT_RATE_LIMIT: '5',
+  COMMENT_DAILY_LIMIT_PER_USER: '2',
+  COMMENT_DAILY_LIMIT_PER_ARTICLE_PER_USER: '2',
+  GUESTBOOK_DAILY_LIMIT_PER_USER: '2',
   COVER_IMAGE_MAX_SIZE_MB: '2',
   AI_API_KEY: '',
   AI_BASE_URL: '',
   AI_MODEL: '',
   WEATHER_API_KEY: '',
   WEATHER_API_BASE_URL: '',
+  N8N_ASSISTANT_WEBHOOK_URL: '',
+  N8N_SECRET: '',
+  ASSISTANT_GUEST_DAILY_LIMIT: '3',
   ADMIN_EMAIL: '',
   SMTP_HOST: '',
   SMTP_PORT: '587',
   SMTP_USER: '',
   SMTP_PASSWORD: '',
   SMTP_FROM: '',
+  N8N_BLOG_INGEST_WEBHOOK_URL: '',
+  SITE_URL: '',
+  GITHUB_URL: '',
+  BILIBILI_URL: '',
 })
 
 const boolForm = reactive({
@@ -384,7 +451,6 @@ const handleConvertDefaultCoverUrl = async () => {
     const blob = await response.blob()
     await convertBlobToDefaultCoverBase64(blob, 'URL 图片')
   } catch {
-    // 浏览器跨域限制可能导致前端无法读取远程图片，提交时交给后端转换。
     form.DEFAULT_ARTICLE_COVER_IMAGE = ''
     toast.info('前端转换失败，保存时将由后端尝试转换该 URL')
   }

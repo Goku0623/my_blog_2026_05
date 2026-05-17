@@ -28,6 +28,19 @@ TORTOISE_ORM = {
 async def init_db():
     await Tortoise.init(config=TORTOISE_ORM)
     await Tortoise.generate_schemas()
+    conn = Tortoise.get_connection("default")
+    await conn.execute_script("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'admin_users' AND column_name = 'avatar'
+            ) THEN
+                ALTER TABLE "admin_users" ADD COLUMN "avatar" TEXT;
+            END IF;
+        END
+        $$;
+    """)
 
 
 async def close_db():

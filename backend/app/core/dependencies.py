@@ -111,27 +111,3 @@ def get_client_ip(request: Request) -> str:
         return real_ip
     return request.client.host if request.client else "unknown"
 
-
-class RateLimiter:
-    def __init__(self, times: int = 60, seconds: int = 60):
-        self.times = times
-        self.seconds = seconds
-
-    async def __call__(self, request: Request):
-        redis = await get_redis_client()
-        ip = get_client_ip(request)
-        key = f"rate_limit:{ip}:{request.url.path}"
-        
-        current = await redis.get(key)
-        if current is None:
-            await redis.setex(key, self.seconds, 1)
-        else:
-            count = int(current)
-            if count >= self.times:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Too many requests",
-                )
-            await redis.incr(key)
-        
-        return True

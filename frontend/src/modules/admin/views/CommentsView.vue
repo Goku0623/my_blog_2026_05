@@ -65,7 +65,7 @@
               <td class="px-4 py-3 text-[var(--text-muted)]">{{ row.id }}</td>
               <td class="px-4 py-3">
                 <div class="flex items-center gap-2">
-                  <UAvatar :name="row.guest_name" :size="28" />
+                  <UAvatar :src="row.guest?.avatar || undefined" :name="row.guest_name" :size="28" />
                   <span class="text-[var(--text)]">{{ row.guest_name }}</span>
                 </div>
               </td>
@@ -162,7 +162,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Search, RotateCcw, CheckSquare } from 'lucide-vue-next'
-import { getAdminComments, commentAction, adminReplyComment, type Comment } from '@/api/comments'
+import { getAdminComments, adminCommentAction, adminReplyComment, type Comment } from '@/api/comments'
 import { formatDateTime } from '@/utils/time'
 import {
   UCard, UInput, UButton, UTag, UEmpty, USpinner, UPagination, UAvatar, UModal,
@@ -272,7 +272,7 @@ const handleAction = async (row: Comment, action: string) => {
     if (!ok) return
   }
   try {
-    await commentAction(row.id, action)
+    await adminCommentAction(row.id, action)
     toast.success('操作成功')
     if (action === 'delete' && comments.value.length === 1 && queryParams.page > 1) {
       queryParams.page--
@@ -297,7 +297,7 @@ const handleBatchAction = async (action: string) => {
   })
   if (!ok) return
   try {
-    await Promise.all(selectedIds.value.map((id) => commentAction(id, action)))
+    await Promise.all(selectedIds.value.map((id) => adminCommentAction(id, action)))
     toast.success(`批量${name}成功`)
     fetchComments()
   } catch {
@@ -318,7 +318,6 @@ const handleAdminReply = async () => {
     const res = await adminReplyComment(currentComment.value.id, replyContent.value)
     toast.success('回复成功')
     replyContent.value = ''
-    // 同步抽屉内数据，避免用户误以为未生效。
     const updated = res.data?.data as Comment | undefined
     if (updated) currentComment.value = updated
     await fetchComments()

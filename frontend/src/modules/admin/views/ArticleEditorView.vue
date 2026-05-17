@@ -39,6 +39,19 @@
               <template #icon><ImagePlus class="size-4" /></template>
               插入正文图片
             </UButton>
+            <UInput
+              v-model="contentImageUrl"
+              placeholder="图片 URL（自动转为 base64 并插入）"
+              class="min-w-[280px] flex-1"
+            />
+            <UButton
+              variant="outline"
+              :loading="convertingContentImageUrl"
+              :disabled="!contentImageUrl.trim()"
+              @click="handleInsertContentImageByUrl"
+            >
+              从URL插入
+            </UButton>
             <p class="text-xs text-[var(--text-muted)]">
               自动压缩并以 base64 插入 Markdown（单张上限约 {{ contentImageMaxSizeMb }}MB）
             </p>
@@ -86,22 +99,7 @@
                 :options="categories.map(c => ({ label: c.name, value: c.id }))"
                 placeholder="选择分类"
               />
-              <div class="flex gap-2">
-                <UInput
-                  v-model="newCategoryName"
-                  placeholder="输入新分类名称"
-                  :disabled="creatingCategory"
-                  @keyup.enter="handleCreateCategory"
-                />
-                <UButton
-                  variant="outline"
-                  :loading="creatingCategory"
-                  :disabled="!newCategoryName.trim()"
-                  @click="handleCreateCategory"
-                >
-                  新建分类
-                </UButton>
-              </div>
+              <p class="text-xs text-[var(--text-muted)]">新增/编辑分类请前往「分类管理」页面</p>
             </div>
             <div class="space-y-1.5">
               <label class="text-xs text-[var(--text-soft)]">标签</label>
@@ -116,22 +114,7 @@
                   #{{ tag.name }}
                 </UTag>
               </div>
-              <div class="flex gap-2">
-                <UInput
-                  v-model="newTagName"
-                  placeholder="输入新标签名称"
-                  :disabled="creatingTag"
-                  @keyup.enter="handleCreateTag"
-                />
-                <UButton
-                  variant="outline"
-                  :loading="creatingTag"
-                  :disabled="!newTagName.trim()"
-                  @click="handleCreateTag"
-                >
-                  新建标签
-                </UButton>
-              </div>
+              <p class="text-xs text-[var(--text-muted)]">新增/编辑标签请前往「标签管理」页面</p>
             </div>
             <div class="space-y-1.5">
               <label class="text-xs text-[var(--text-soft)]">封面图</label>
@@ -180,6 +163,17 @@
               <label class="text-sm text-[var(--text)]">允许评论</label>
               <USwitch v-model="formData.allow_comment" />
             </div>
+            <div class="space-y-1.5">
+              <label class="text-xs text-[var(--text-soft)]">定时发布</label>
+              <UInput
+                v-model="formData.scheduled_publish_at"
+                type="datetime-local"
+                placeholder="不设置则保持普通草稿"
+              />
+              <p class="text-xs text-[var(--text-muted)]">
+                仅草稿生效，到点后系统会自动发布并清空定时设置
+              </p>
+            </div>
           </div>
         </UCard>
 
@@ -215,12 +209,12 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { Save, Rocket, ChevronDown, ImagePlus, Trash2 } from 'lucide-vue-next'
 import {
   getAdminArticle, createArticle, updateArticle,
   saveArticleDraftCopy, publishDraftToSource,
-  getCategories, getTags, createCategory, createTag, type Category, type Tag,
+  getCategories, getTags, type Category, type Tag,
 } from '@/api/articles'
 import { getSiteConfig } from '@/api/system'
 import { useMarkdown } from '@/composables/useMarkdown'
@@ -243,19 +237,33 @@ const sourceArticleId = ref<number | null>(null)
 
 const categories = ref<Category[]>([])
 const tags = ref<Tag[]>([])
-const newCategoryName = ref('')
-const newTagName = ref('')
-const creatingCategory = ref(false)
-const creatingTag = ref(false)
 const coverInputRef = ref<HTMLInputElement | null>(null)
 const contentImageInputRef = ref<HTMLInputElement | null>(null)
 const contentTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const coverImageUrl = ref('')
+const contentImageUrl = ref('')
+const convertingContentImageUrl = ref(false)
 const coverMaxSizeMb = ref(2)
 const maxCoverImageBytes = computed(() => coverMaxSizeMb.value * 1024 * 1024)
 const contentImageMaxSizeMb = computed(() => Math.max(3, Math.min(10, coverMaxSizeMb.value * 2)))
 const maxContentImageBytes = computed(() => contentImageMaxSizeMb.value * 1024 * 1024)
 const PREVIEW_PLACEHOLDER_HTML = '<p class="text-sm text-[var(--text-muted)] text-center mt-12">在左侧输入 Markdown 内容…</p>'
+const CONTENT_IMAGE_REF_PREFIX = 'imgref:'
+const contentImageRefs = ref<Record<string, string>>({})
+
+const toDateTimeLocal = (value?: string | null) => {
+  if (!value) return ''
+  const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/)
+  if (!matched) return ''
+  const [, year, month, day, hours, minutes] = matched
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+const toIsoStringOrNull = (value?: string | null) => {
+  if (!value) return null
+  // 管理端按 Asia/Shanghai 语义处理
+  return `${value}:00+08:00`
+}
 
 const formData = reactive({
   title: '',
@@ -270,15 +278,62 @@ const formData = reactive({
   seo_title: '',
   seo_keywords: '',
   seo_description: '',
+  scheduled_publish_at: '',
 })
+
+const snapshotComparableForm = () => ({
+  title: formData.title,
+  content: formData.content,
+  summary: formData.summary,
+  category_id: formData.category_id ?? null,
+  tag_ids: [...formData.tag_ids].sort((a, b) => a - b),
+  cover_image: formData.cover_image ?? '',
+  is_featured: formData.is_featured,
+  allow_comment: formData.allow_comment,
+  seo_title: formData.seo_title,
+  seo_keywords: formData.seo_keywords,
+  seo_description: formData.seo_description,
+  scheduled_publish_at: formData.scheduled_publish_at || null,
+})
+
+const editableFields = [
+  'title',
+  'content',
+  'summary',
+  'category_id',
+  'tag_ids',
+  'cover_image',
+  'is_featured',
+  'allow_comment',
+  'seo_title',
+  'seo_keywords',
+  'seo_description',
+  'scheduled_publish_at',
+] as const
+
+
+let initialComparableForm: ReturnType<typeof snapshotComparableForm> | null = null
+let suppressLeavePrompt = false
 
 const renderedPreview = ref(PREVIEW_PLACEHOLDER_HTML)
 let previewRenderTimer: number | null = null
 
 let autoSaveTimer: number | null = null
 
+const hasUnsavedChanges = () => {
+  if (!initialComparableForm) return false
+  return JSON.stringify(snapshotComparableForm()) !== JSON.stringify(initialComparableForm)
+}
+
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (suppressLeavePrompt || !hasUnsavedChanges()) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 const renderPreview = () => {
-  renderedPreview.value = formData.content ? render(formData.content) : PREVIEW_PLACEHOLDER_HTML
+  const contentForPreview = expandContentImageRefs(formData.content)
+  renderedPreview.value = contentForPreview ? render(contentForPreview) : PREVIEW_PLACEHOLDER_HTML
 }
 
 const schedulePreviewRender = (immediate = false) => {
@@ -296,17 +351,35 @@ const schedulePreviewRender = (immediate = false) => {
   }, 120)
 }
 
-const createSlug = (rawName: string, prefix: 'cat' | 'tag') => {
-  const normalized = rawName
-    .trim()
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
+const generateContentImageRefKey = () => {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
 
-  if (normalized) return normalized
-  return `${prefix}-${Date.now().toString(36)}`
+const createContentImageRefMarkdown = (altText: string, imageDataUrl: string) => {
+  const key = generateContentImageRefKey()
+  contentImageRefs.value[key] = imageDataUrl
+  return `![${altText}](${CONTENT_IMAGE_REF_PREFIX}${key})`
+}
+
+const expandContentImageRefs = (markdown: string) => {
+  if (!markdown) return ''
+  return markdown.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (matched, alt, src) => {
+    if (!src.startsWith(CONTENT_IMAGE_REF_PREFIX)) return matched
+    const refKey = src.slice(CONTENT_IMAGE_REF_PREFIX.length)
+    const actualSrc = contentImageRefs.value[refKey]
+    if (!actualSrc) return matched
+    return `![${alt}](${actualSrc})`
+  })
+}
+
+const compactInlineBase64Images = (markdown: string) => {
+  if (!markdown) return ''
+  return markdown.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (matched, alt, src) => {
+    if (!src.startsWith('data:image/')) return matched
+    const key = generateContentImageRefKey()
+    contentImageRefs.value[key] = src
+    return `![${alt}](${CONTENT_IMAGE_REF_PREFIX}${key})`
+  })
 }
 
 const fetchMetadata = async () => {
@@ -327,7 +400,8 @@ const fetchArticle = async () => {
     const res = await getAdminArticle(articleId.value)
     const data: any = res.data?.data ?? {}
     formData.title = data.title ?? ''
-    formData.content = data.content ?? ''
+    contentImageRefs.value = {}
+    formData.content = compactInlineBase64Images(data.content ?? '')
     formData.summary = data.summary ?? ''
     formData.category_id = data.category?.id ?? data.category_id
     formData.tag_ids = (data.tags ?? []).map((t: any) => t.id)
@@ -342,6 +416,8 @@ const fetchArticle = async () => {
     formData.seo_title = data.seo_title ?? ''
     formData.seo_keywords = data.seo_keywords ?? ''
     formData.seo_description = data.seo_description ?? ''
+    formData.scheduled_publish_at = toDateTimeLocal(data.scheduled_publish_at)
+    initialComparableForm = snapshotComparableForm()
   } catch {
     toast.error('获取文章详情失败')
   }
@@ -419,6 +495,34 @@ const compressImageBlob = async (
   throw new Error('compress failed')
 }
 
+const resizeImageBlob = async (blob: Blob, maxLongEdge = 1600): Promise<Blob> => {
+  const image = await loadImageElement(blob)
+  const sourceLongEdge = Math.max(image.width, image.height)
+  if (sourceLongEdge <= maxLongEdge) {
+    return blob
+  }
+
+  const scale = maxLongEdge / sourceLongEdge
+  const targetWidth = Math.max(1, Math.floor(image.width * scale))
+  const targetHeight = Math.max(1, Math.floor(image.height * scale))
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error('canvas unavailable')
+  }
+  canvas.width = targetWidth
+  canvas.height = targetHeight
+  ctx.clearRect(0, 0, targetWidth, targetHeight)
+  ctx.drawImage(image, 0, 0, targetWidth, targetHeight)
+  const resizedBlob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', 0.9)
+  })
+  if (!resizedBlob) {
+    throw new Error('resize failed')
+  }
+  return resizedBlob
+}
+
 const convertBlobToCoverBase64 = async (blob: Blob, sourceLabel: string) => {
   if (!blob.type.startsWith('image/')) {
     toast.warning('请选择图片文件')
@@ -481,7 +585,6 @@ const handleConvertCoverUrl = async () => {
     const blob = await response.blob()
     await convertBlobToCoverBase64(blob, 'URL 图片')
   } catch {
-    // 浏览器跨域限制可能导致前端无法读取远程图片，提交时交给后端转换。
     formData.cover_image = ''
     toast.info('前端转换失败，保存时将由后端尝试转换该 URL')
   }
@@ -511,29 +614,34 @@ const insertTextAtCursor = (text: string) => {
   })
 }
 
+const normalizeContentImageName = (fileName: string) => {
+  return (fileName || 'image')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^\w\u4e00-\u9fa5-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'image'
+}
+
 const handleContentImageChange = async (event: Event) => {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
   if (!file) return
 
   try {
-    let finalBlob: Blob = file
-    if (file.size > maxContentImageBytes.value) {
-      finalBlob = await compressImageBlob(file, maxContentImageBytes.value, 1600)
+    let finalBlob: Blob = await resizeImageBlob(file, 1600)
+    if (finalBlob.size > maxContentImageBytes.value) {
+      finalBlob = await compressImageBlob(finalBlob, maxContentImageBytes.value, 1600)
     }
     const imageDataUrl = await blobToDataUrl(finalBlob)
     if (!imageDataUrl.startsWith('data:image/')) {
       throw new Error('invalid data url')
     }
 
-    const safeName = (file.name || 'image')
-      .replace(/\.[^.]+$/, '')
-      .replace(/[^\w\u4e00-\u9fa5-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '') || 'image'
-    const markdown = `\n![${safeName}](${imageDataUrl})\n`
+    const safeName = normalizeContentImageName(file.name || 'image')
+    const shortRefMarkdown = createContentImageRefMarkdown(safeName, imageDataUrl)
+    const markdown = `\n${shortRefMarkdown}\n`
     insertTextAtCursor(markdown)
-    toast.success('正文图片已插入（base64）')
+    toast.success('正文图片已插入（短引用展示）')
   } catch {
     toast.error('正文图片处理失败，请重试')
   } finally {
@@ -541,58 +649,55 @@ const handleContentImageChange = async (event: Event) => {
   }
 }
 
-const handleCreateCategory = async () => {
-  const name = newCategoryName.value.trim()
-  if (!name) {
-    toast.warning('请输入分类名称')
+const handleInsertContentImageByUrl = async () => {
+  const url = contentImageUrl.value.trim()
+  if (!url) {
+    toast.warning('请输入图片 URL')
     return
   }
-  try {
-    creatingCategory.value = true
-    const payload = { name, slug: createSlug(name, 'cat') }
-    const res = await createCategory(payload)
-    await fetchMetadata()
-    const createdId = res.data?.data?.id
-    const matched = categories.value.find((c) => c.name === name)
-    formData.category_id = createdId ?? matched?.id ?? formData.category_id
-    newCategoryName.value = ''
-    toast.success('分类创建成功')
-  } catch {
-    toast.error('分类创建失败')
-  } finally {
-    creatingCategory.value = false
+  if (!/^https?:\/\//i.test(url)) {
+    toast.warning('仅支持 http/https URL')
+    return
   }
-}
 
-const handleCreateTag = async () => {
-  const name = newTagName.value.trim()
-  if (!name) {
-    toast.warning('请输入标签名称')
-    return
-  }
   try {
-    creatingTag.value = true
-    const payload = { name, slug: createSlug(name, 'tag') }
-    const res = await createTag(payload)
-    await fetchMetadata()
-    const createdId = res.data?.data?.id
-    const matched = tags.value.find((t) => t.name === name)
-    const targetId = createdId ?? matched?.id
-    if (targetId && !formData.tag_ids.includes(targetId)) {
-      formData.tag_ids.push(targetId)
+    convertingContentImageUrl.value = true
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error('fetch failed')
     }
-    newTagName.value = ''
-    toast.success('标签创建成功')
+    const blob = await response.blob()
+    if (!blob.type.startsWith('image/')) {
+      toast.warning('URL 对应资源不是图片')
+      return
+    }
+    let finalBlob: Blob = await resizeImageBlob(blob, 1600)
+    if (finalBlob.size > maxContentImageBytes.value) {
+      finalBlob = await compressImageBlob(finalBlob, maxContentImageBytes.value, 1600)
+    }
+    const imageDataUrl = await blobToDataUrl(finalBlob)
+    if (!imageDataUrl.startsWith('data:image/')) {
+      throw new Error('invalid data url')
+    }
+    const rawName = url.split('/').pop() || 'image-from-url'
+    const safeName = normalizeContentImageName(rawName)
+    const shortRefMarkdown = createContentImageRefMarkdown(safeName, imageDataUrl)
+    insertTextAtCursor(`\n${shortRefMarkdown}\n`)
+    contentImageUrl.value = ''
+    toast.success('URL 图片已转换并插入（短引用展示）')
   } catch {
-    toast.error('标签创建失败')
+    toast.error('URL 图片处理失败，可能受跨域限制')
   } finally {
-    creatingTag.value = false
+    convertingContentImageUrl.value = false
   }
 }
 
 const saveLocalDraft = () => {
   if (isEdit.value) return
-  localStorage.setItem('article_draft', JSON.stringify(formData))
+  localStorage.setItem('article_draft', JSON.stringify({
+    form: formData,
+    contentImageRefs: contentImageRefs.value,
+  }))
   lastSaved.value = formatDateTime(new Date().toISOString())
 }
 
@@ -601,7 +706,15 @@ const loadLocalDraft = () => {
   const raw = localStorage.getItem('article_draft')
   if (!raw) return
   try {
-    Object.assign(formData, JSON.parse(raw))
+    const parsed = JSON.parse(raw)
+    if (parsed?.form) {
+      Object.assign(formData, parsed.form)
+      contentImageRefs.value = parsed.contentImageRefs ?? {}
+    } else {
+      Object.assign(formData, parsed)
+      contentImageRefs.value = {}
+      formData.content = compactInlineBase64Images(formData.content ?? '')
+    }
     toast.info('已恢复本地草稿')
   } catch { /* ignore */ }
 }
@@ -619,6 +732,17 @@ const validate = () => {
     toast.warning('请选择文章分类')
     return false
   }
+  if (formData.scheduled_publish_at) {
+    const ts = new Date(formData.scheduled_publish_at).getTime()
+    if (Number.isNaN(ts)) {
+      toast.warning('定时发布时间格式不正确')
+      return false
+    }
+    if (ts <= Date.now()) {
+      toast.warning('定时发布时间必须晚于当前时间')
+      return false
+    }
+  }
   return true
 }
 
@@ -632,12 +756,39 @@ const submit = async (publish: boolean) => {
     const normalizedUrl = coverImageUrl.value.trim()
     const payload = {
       ...formData,
+      content: expandContentImageRefs(formData.content),
       cover_image: normalizedBase64 || normalizedUrl || null,
-      status: publish ? 'published' : 'draft',
+      scheduled_publish_at: publish ? null : toIsoStringOrNull(formData.scheduled_publish_at),
+    }
+    if (!isEdit.value || publish) {
+      ;(payload as any).status = publish ? 'published' : 'draft'
     }
     if (isEdit.value) {
+      const comparablePayload = {
+        ...payload,
+        category_id: payload.category_id ?? null,
+        tag_ids: [...(payload.tag_ids ?? [])].sort((a, b) => a - b),
+        cover_image: payload.cover_image ?? '',
+      }
+      const changedPayload = {} as Record<string, any>
+      for (const key of editableFields) {
+        if (!initialComparableForm) {
+          changedPayload[key] = comparablePayload[key]
+          continue
+        }
+        if (JSON.stringify(comparablePayload[key]) !== JSON.stringify(initialComparableForm[key])) {
+          changedPayload[key] = comparablePayload[key]
+        }
+      }
+      if (publish) {
+        changedPayload.status = 'published'
+      } else if (Object.keys(changedPayload).length === 0) {
+        toast.info('内容未变化，无需保存')
+        return
+      }
+
       if (!publish && !isDraftCopy.value && originalStatus.value === 'published') {
-        await saveArticleDraftCopy(articleId.value, payload as any)
+        await saveArticleDraftCopy(articleId.value, changedPayload as any)
         toast.success('已生成草稿副本，原发布文章不受影响')
         shouldJumpToArticles = true
       } else if (publish && isDraftCopy.value) {
@@ -645,9 +796,11 @@ const submit = async (publish: boolean) => {
         toast.success('草稿已同步到原文并发布')
         shouldJumpToArticles = true
       } else {
-        await updateArticle(articleId.value, payload as any)
+        await updateArticle(articleId.value, changedPayload as any)
         if (publish) originalStatus.value = 'published'
-        else originalStatus.value = 'draft'
+        initialComparableForm = {
+          ...comparablePayload,
+        }
         toast.success(publish ? '文章已更新发布' : '草稿已保存')
         shouldJumpToArticles = true
       }
@@ -659,6 +812,7 @@ const submit = async (publish: boolean) => {
     }
     lastSaved.value = formatDateTime(new Date().toISOString())
     if (shouldJumpToArticles) {
+      suppressLeavePrompt = true
       router.push('/admin/articles')
     }
   } catch {
@@ -678,7 +832,19 @@ onMounted(async () => {
   } else {
     loadLocalDraft()
     autoSaveTimer = window.setInterval(saveLocalDraft, 30000)
+    initialComparableForm = snapshotComparableForm()
   }
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onBeforeRouteLeave((_to, _from, next) => {
+  if (suppressLeavePrompt || !hasUnsavedChanges()) {
+    next()
+    return
+  }
+  const ok = window.confirm('检测到未保存的更改，确定离开当前页面吗？')
+  if (ok) next()
+  else next(false)
 })
 
 watch(() => formData.content, () => {
@@ -691,5 +857,6 @@ onUnmounted(() => {
     window.clearTimeout(previewRenderTimer)
     previewRenderTimer = null
   }
+  window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>

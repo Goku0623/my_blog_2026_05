@@ -3,6 +3,7 @@ import request from './index'
 export interface GuestbookMessage {
   id: number
   guest_name: string
+  guest_avatar?: string | null
   content: string
   rendered_content?: string
   status: string

@@ -77,7 +77,6 @@ use([
   GridComponent, TooltipComponent, LegendComponent, TitleComponent,
 ])
 
-// 简单分段控件
 const SegControl = (props: any, { emit }: any) =>
   h(
     'div',
@@ -265,7 +264,6 @@ const writeStatisticsCache = () => {
   try {
     sessionStorage.setItem(STATS_CACHE_KEY, JSON.stringify(payload))
   } catch {
-    // ignore cache write failure
   }
 }
 

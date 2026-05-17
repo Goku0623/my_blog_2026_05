@@ -111,3 +111,25 @@ def refresh_sensitive_words_cache():
     finally:
         loop.run_until_complete(_close_db())
         loop.close()
+
+
+async def _clear_old_operation_logs_async():
+    from app.modules.system.models import OperationLog
+
+    days_ago = datetime.now() - timedelta(days=30)
+    deleted = await OperationLog.filter(created_at__lt=days_ago).delete()
+
+    return {"deleted": deleted}
+
+
+@celery_app.task(name="cache.clear_old_operation_logs")
+def clear_old_operation_logs():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_init_db())
+        result = loop.run_until_complete(_clear_old_operation_logs_async())
+        return result
+    finally:
+        loop.run_until_complete(_close_db())
+        loop.close()

@@ -17,6 +17,7 @@ from app.core.security import decode_token
 from app.modules.auth.models import AdminUser
 from app.common.response import success, error
 from app.common.exceptions import UnauthorizedException, BadRequestException
+from app.modules.system.service import OperationLogService
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -141,6 +142,7 @@ async def get_current_user_info(current_admin: AdminUser = Depends(get_current_a
 @router.put("/me", response_model=dict)
 async def update_current_user_info(
     profile_data: UpdateProfileRequest,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin),
 ):
     try:
@@ -148,6 +150,16 @@ async def update_current_user_info(
             current_admin,
             profile_data.username,
             profile_data.email,
+            profile_data.avatar,
+        )
+        await OperationLogService.log_operation(
+            operator=admin.username,
+            action="profile_update",
+            target_type="admin_user",
+            target_id=admin.id,
+            detail=f"更新个人资料",
+            ip=get_client_ip(request),
+            result="success",
         )
         return success(AdminUserOut.model_validate(admin), "Profile updated successfully")
     except BadRequestException as e:
@@ -165,6 +177,7 @@ async def update_current_user_info(
 @router.put("/change-password", response_model=dict)
 async def change_password(
     password_data: ChangePasswordRequest,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
@@ -173,7 +186,15 @@ async def change_password(
             password_data.old_password,
             password_data.new_password
         )
-        
+        await OperationLogService.log_operation(
+            operator=current_admin.username,
+            action="password_change",
+            target_type="admin_user",
+            target_id=current_admin.id,
+            detail="修改密码",
+            ip=get_client_ip(request),
+            result="success",
+        )
         return success(None, "Password changed successfully")
         
     except HTTPException:

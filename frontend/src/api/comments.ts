@@ -7,6 +7,7 @@ export interface Comment {
     id: number
     guest_token: string
     nickname?: string
+    avatar?: string | null
     created_at: string
   }
   article_title?: string
@@ -63,7 +64,6 @@ const normalizeComment = (comment: any): Comment => {
   } as Comment
 }
 
-// 获取评论列表（前台，仅显示已发布）
 export const getComments = (params: CommentListParams) => {
   const { article_id, ...rest } = params
   if (!article_id) {
@@ -77,17 +77,14 @@ export const getComments = (params: CommentListParams) => {
     })
 }
 
-// 创建评论（前台）
 export const createComment = (data: CreateCommentParams) => {
   return request.post<{ data: Comment }>('/comments', data)
 }
 
-// 获取游客身份（若无则自动创建）
 export const getGuestIdentity = () => {
   return request.get<{ data: GuestIdentity }>('/guest/identity')
 }
 
-// 管理端：获取评论列表
 export const getAdminComments = (params: CommentListParams, signal?: AbortSignal) => {
   return request.get<{ data: CommentListResponse }>('/admin/comments', {
     params,
@@ -98,12 +95,10 @@ export const getAdminComments = (params: CommentListParams, signal?: AbortSignal
   })
 }
 
-// 管理端：评论管理动作 (hide / delete / pin / unpin)
-export const commentAction = (id: number, action: string, reason?: string) => {
-  return request.post(`/admin/comments/${id}/action`, { action, reason })
+export const adminCommentAction = (commentId: number, action: string, reason?: string) => {
+  return request.post(`/admin/comments/${commentId}/action`, { action, reason })
 }
 
-// 管理端：管理员回复评论
-export const adminReplyComment = (id: number, content: string) => {
-  return request.post(`/admin/comments/${id}/reply`, { content })
+export const adminReplyComment = (commentId: number, content: string) => {
+  return request.post(`/admin/comments/${commentId}/reply`, { content })
 }

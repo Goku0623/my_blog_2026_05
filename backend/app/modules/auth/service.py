@@ -158,7 +158,7 @@ class AuthService:
         await admin.save()
 
     @staticmethod
-    async def update_profile(admin: AdminUser, username: str, email: Optional[str]):
+    async def update_profile(admin: AdminUser, username: str, email: Optional[str], avatar: Optional[str] = None):
         username = username.strip()
         if not username:
             raise BadRequestException("Username cannot be empty")
@@ -175,7 +175,22 @@ class AuthService:
 
         admin.username = username
         admin.email = normalized_email
+        if avatar is not None:
+            normalized_avatar = avatar.strip()
+            if normalized_avatar and not normalized_avatar.startswith("data:image/"):
+                raise BadRequestException("avatar must be a data:image base64 URL")
+            admin.avatar = normalized_avatar or None
         await admin.save()
+
+        # 同步 ADMIN_EMAIL 配置项，确保"关于我"等公开页面展示最新邮箱。
+        from app.modules.system.models import SiteConfig
+        from app.core.redis_client import get_redis_client
+        admin_email_config = await SiteConfig.get_or_none(key="ADMIN_EMAIL")
+        if admin_email_config:
+            admin_email_config.value = normalized_email or ""
+            await admin_email_config.save()
+            redis = await get_redis_client()
+            await redis.delete("config:ADMIN_EMAIL")
 
         # 同步管理员对应的评论身份昵称，避免前端不同模块出现旧昵称。
         from app.modules.comments.models import GuestIdentity

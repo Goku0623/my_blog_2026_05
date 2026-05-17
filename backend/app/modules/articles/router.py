@@ -59,6 +59,7 @@ async def _serialize_article_list_item(article, draft_link_map: Optional[dict[in
         "cover_image_thumb": article.cover_image_thumb,
         "view_count": article.view_count,
         "is_featured": article.is_featured,
+        "scheduled_publish_at": article.scheduled_publish_at,
         "published_at": article.published_at,
         "created_at": article.created_at,
         "updated_at": article.updated_at,
@@ -110,6 +111,11 @@ async def search_articles(
     time_filter: str = Query("all", pattern="^(all|7d|30d|90d|365d)$"),
 ):
     try:
+        try:
+            await ArticleService.backfill_missing_published_at()
+        except Exception:
+            # 搜索不应因历史数据修复失败而整体不可用。
+            pass
         result = await ArticleService.search_articles(
             keyword=keyword,
             page=page,
@@ -189,6 +195,7 @@ async def get_article_by_slug(slug: str, request: Request):
             "seo_title": article.seo_title,
             "seo_description": article.seo_description,
             "seo_keywords": article.seo_keywords,
+            "scheduled_publish_at": article.scheduled_publish_at,
             "published_at": article.published_at,
             "created_at": article.created_at,
             "updated_at": article.updated_at,
@@ -306,6 +313,7 @@ async def create_article(
             "seo_title": article.seo_title,
             "seo_description": article.seo_description,
             "seo_keywords": article.seo_keywords,
+            "scheduled_publish_at": article.scheduled_publish_at,
             "published_at": article.published_at,
             "created_at": article.created_at,
             "updated_at": article.updated_at,
@@ -337,13 +345,7 @@ async def get_article_admin(
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
-        article = await ArticleService.get_article_by_slug(str(article_id), is_admin=True)
-        if not article:
-            article_obj = await ArticleService.list_articles(is_admin=True)
-            for item in article_obj["items"]:
-                if item.id == article_id:
-                    article = item
-                    break
+        article = await ArticleService.get_article_by_id(article_id)
         
         if not article:
             raise HTTPException(
@@ -378,6 +380,7 @@ async def get_article_admin(
             "seo_title": article.seo_title if hasattr(article, "seo_title") else None,
             "seo_description": article.seo_description if hasattr(article, "seo_description") else None,
             "seo_keywords": article.seo_keywords if hasattr(article, "seo_keywords") else None,
+            "scheduled_publish_at": article.scheduled_publish_at if hasattr(article, "scheduled_publish_at") else None,
             "published_at": article.published_at if hasattr(article, "published_at") else None,
             "created_at": article.created_at,
             "updated_at": article.updated_at,
@@ -432,6 +435,7 @@ async def update_article(
             "seo_title": article.seo_title,
             "seo_description": article.seo_description,
             "seo_keywords": article.seo_keywords,
+            "scheduled_publish_at": article.scheduled_publish_at,
             "published_at": article.published_at,
             "created_at": article.created_at,
             "updated_at": article.updated_at,
@@ -551,6 +555,7 @@ async def unpublish_article(
 async def create_or_update_article_draft(
     article_id: int,
     article_data: ArticleUpdate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
@@ -580,12 +585,20 @@ async def create_or_update_article_draft(
             "seo_title": draft.seo_title,
             "seo_description": draft.seo_description,
             "seo_keywords": draft.seo_keywords,
+            "scheduled_publish_at": draft.scheduled_publish_at,
             "published_at": draft.published_at,
             "created_at": draft.created_at,
             "updated_at": draft.updated_at,
             "is_draft_copy": True,
             "source_article_id": article_id,
         }
+        await _log_article_operation(
+            action="article_draft_save",
+            current_admin=current_admin,
+            request=request,
+            article_id=draft.id,
+            detail=f"保存草稿副本：{draft.title}",
+        )
         return success(article_dict, "Draft copy saved successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -607,10 +620,18 @@ async def create_or_update_article_draft(
 @admin_router.post("/articles/drafts/{draft_id}/publish", response_model=dict)
 async def publish_draft_to_source_article(
     draft_id: int,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
         article = await ArticleService.publish_from_draft_copy(draft_id)
+        await _log_article_operation(
+            action="article_draft_publish",
+            current_admin=current_admin,
+            request=request,
+            article_id=article.id,
+            detail=f"发布草稿副本：{article.title}",
+        )
         return success({"id": article.id, "status": article.status}, "Draft published successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -632,10 +653,20 @@ async def publish_draft_to_source_article(
 @admin_router.post("/categories", response_model=dict)
 async def create_category(
     category_data: CategoryCreate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
         category = await CategoryService.create_category(category_data)
+        await OperationLogService.log_operation(
+            operator=current_admin.username,
+            action="category_create",
+            target_type="category",
+            target_id=category.id,
+            detail=f"创建分类：{category.name}",
+            ip=get_client_ip(request),
+            result="success",
+        )
         return success(CategoryOut.model_validate(category), "Category created successfully")
     except BadRequestException as e:
         raise HTTPException(
@@ -653,10 +684,20 @@ async def create_category(
 async def update_category(
     category_id: int,
     category_data: CategoryUpdate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
         category = await CategoryService.update_category(category_id, category_data)
+        await OperationLogService.log_operation(
+            operator=current_admin.username,
+            action="category_update",
+            target_type="category",
+            target_id=category.id,
+            detail=f"更新分类：{category.name}",
+            ip=get_client_ip(request),
+            result="success",
+        )
         return success(CategoryOut.model_validate(category), "Category updated successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -678,10 +719,22 @@ async def update_category(
 @admin_router.delete("/categories/{category_id}", response_model=dict)
 async def delete_category(
     category_id: int,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
+        category = await CategoryService.get_category_by_id(category_id)
+        category_name = category.name if category else f"#{category_id}"
         await CategoryService.delete_category(category_id)
+        await OperationLogService.log_operation(
+            operator=current_admin.username,
+            action="category_delete",
+            target_type="category",
+            target_id=category_id,
+            detail=f"删除分类：{category_name}",
+            ip=get_client_ip(request),
+            result="success",
+        )
         return success(None, "Category deleted successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -703,10 +756,20 @@ async def delete_category(
 @admin_router.post("/tags", response_model=dict)
 async def create_tag(
     tag_data: TagCreate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
         tag = await TagService.create_tag(tag_data)
+        await OperationLogService.log_operation(
+            operator=current_admin.username,
+            action="tag_create",
+            target_type="tag",
+            target_id=tag.id,
+            detail=f"创建标签：{tag.name}",
+            ip=get_client_ip(request),
+            result="success",
+        )
         return success(TagOut.model_validate(tag), "Tag created successfully")
     except BadRequestException as e:
         raise HTTPException(
@@ -724,10 +787,20 @@ async def create_tag(
 async def update_tag(
     tag_id: int,
     tag_data: TagUpdate,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
         tag = await TagService.update_tag(tag_id, tag_data)
+        await OperationLogService.log_operation(
+            operator=current_admin.username,
+            action="tag_update",
+            target_type="tag",
+            target_id=tag.id,
+            detail=f"更新标签：{tag.name}",
+            ip=get_client_ip(request),
+            result="success",
+        )
         return success(TagOut.model_validate(tag), "Tag updated successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -749,10 +822,22 @@ async def update_tag(
 @admin_router.delete("/tags/{tag_id}", response_model=dict)
 async def delete_tag(
     tag_id: int,
+    request: Request,
     current_admin: AdminUser = Depends(get_current_admin)
 ):
     try:
+        tag = await TagService.get_tag_by_id(tag_id)
+        tag_name = tag.name if tag else f"#{tag_id}"
         await TagService.delete_tag(tag_id)
+        await OperationLogService.log_operation(
+            operator=current_admin.username,
+            action="tag_delete",
+            target_type="tag",
+            target_id=tag_id,
+            detail=f"删除标签：{tag_name}",
+            ip=get_client_ip(request),
+            result="success",
+        )
         return success(None, "Tag deleted successfully")
     except NotFoundException as e:
         raise HTTPException(

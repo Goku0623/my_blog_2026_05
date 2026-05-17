@@ -1,6 +1,7 @@
 import asyncio
 import shutil
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+from typing import Optional
 from tortoise.functions import Sum
 
 from app.modules.articles.models import Article, ArticleView
@@ -16,7 +17,6 @@ from app.core.redis_client import get_redis_client
 
 
 class StatisticsService:
-    STARTED_AT = datetime.utcnow()
 
     @staticmethod
     async def _count_metric_in_range(start_dt: datetime, end_dt: datetime, metric: str) -> int:
@@ -284,6 +284,17 @@ class StatisticsService:
             return []
     
     @staticmethod
+    async def _get_site_started_at() -> Optional[datetime]:
+        from app.modules.system.models import SiteConfig
+        cfg = await SiteConfig.get_or_none(key="SITE_STARTED_AT")
+        if not cfg or not cfg.value:
+            return None
+        try:
+            return datetime.fromisoformat(cfg.value)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
     async def check_system_health() -> SystemHealthResponse:
         services = []
         
@@ -426,15 +437,20 @@ class StatisticsService:
             overall_status = "degraded"
         else:
             overall_status = "healthy"
-        
-        uptime_seconds = int((datetime.utcnow() - StatisticsService.STARTED_AT).total_seconds())
-        uptime = StatisticsService._format_uptime(uptime_seconds)
+
+        started_at = await StatisticsService._get_site_started_at()
+        if started_at:
+            uptime_seconds = int((datetime.now(timezone.utc) - started_at).total_seconds())
+            uptime = StatisticsService._format_uptime(uptime_seconds)
+        else:
+            uptime = "-"
 
         return SystemHealthResponse(
             overall_status=overall_status,
             services=services,
-            checked_at=datetime.utcnow(),
+            checked_at=datetime.now(timezone.utc),
             uptime=uptime,
+            started_at=started_at,
         )
     
     @staticmethod
@@ -468,15 +484,16 @@ class StatisticsService:
     
     @staticmethod
     async def send_alert_notification(subject: str, message: str):
-        from app.core.celery_app import celery_app
-        
-        try:
-            celery_app.send_task(
-                "app.tasks.send_email",
-                args=[subject, message]
-            )
-        except Exception:
-            pass
+        from app.modules.system.service import AdminNotificationService
+        from app.modules.system.models import AdminNotification
+        from app.tasks.notification_tasks import send_alert_email
+
+        await AdminNotificationService.create_notification(
+            type=AdminNotification.TYPE_SYSTEM_ALERT,
+            title=subject,
+            content=message,
+        )
+        await send_alert_email(subject, f"<html><body><p>{message}</p></body></html>")
     
     @staticmethod
     async def get_top_viewed_articles(limit: int = 10) -> list[TopArticle]:
@@ -500,7 +517,7 @@ class StatisticsService:
         comments = await Comment.filter(
             status=Comment.STATUS_APPROVED
         ).order_by("-created_at").limit(limit).prefetch_related("article", "guest")
-        from app.modules.comments.service import resolve_guest_display_name
+        from app.modules.comments.service import resolve_guest_display_name, resolve_guest_avatar
 
         activities = []
         for comment in comments:
@@ -513,12 +530,14 @@ class StatisticsService:
                 article_id=article.id, status=Comment.STATUS_APPROVED
             ).count()
             guest_name = await resolve_guest_display_name(guest) if guest else "游客"
+            guest_avatar = await resolve_guest_avatar(guest) if guest else None
 
             activities.append(RecentCommentActivity(
                 id=comment.id,
                 article_id=article.id,
                 article_title=article.title,
                 guest_name=guest_name,
+                guest_avatar=guest_avatar,
                 content=comment.content,
                 created_at=comment.created_at,
                 comment_count=article_comments,

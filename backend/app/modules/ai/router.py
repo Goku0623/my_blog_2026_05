@@ -22,14 +22,16 @@ async def receive_n8n_article(
     payload: N8NArticlePayload,
     x_n8n_secret: str = Header(None, alias="X-N8N-Secret"),
 ):
-    if x_n8n_secret:
-        payload.n8n_secret = x_n8n_secret
-    
-    if not payload.n8n_secret:
+    if not x_n8n_secret:
         raise UnauthorizedException("缺少 N8N 密钥")
-    
-    article = await service.receive_n8n_article(payload)
-    
+
+    article = await service.receive_n8n_article(payload, x_n8n_secret)
+
+    if article.status == article.STATUS_DRAFT:
+        from app.tasks.notification_tasks import send_n8n_draft_email_safe
+
+        await send_n8n_draft_email_safe(article.title, article.id, article.slug)
+
     return success({
         "article_id": article.id,
         "title": article.title,

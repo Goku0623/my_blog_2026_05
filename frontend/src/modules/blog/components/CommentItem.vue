@@ -7,7 +7,7 @@
         : 'p-4 sm:p-5 hover:bg-[var(--bg-soft)]/40',
     ]"
   >
-    <UAvatar :name="comment.guest_name" :size="isReply ? 32 : 40" />
+    <UAvatar :name="comment.guest_name" :src="comment.guest?.avatar || undefined" :size="isReply ? 32 : 40" />
     <div class="flex-1 min-w-0">
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1.5">
         <a

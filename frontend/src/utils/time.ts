@@ -103,13 +103,10 @@ export const formatFriendlyTime = (date: string | Date): string => {
   const targetDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
 
   if (targetDay.getTime() === today.getTime()) {
-    // 今天：显示相对时间
     return formatRelativeTime(d)
   } else if (targetDay.getTime() === yesterday.getTime()) {
-    // 昨天：显示"昨天 HH:mm"
     return `昨天 ${formatTime(d).slice(0, 5)}`
   } else {
-    // 更早：显示完整日期
     return formatDateTime(d, 'YYYY-MM-DD HH:mm')
   }
 }
