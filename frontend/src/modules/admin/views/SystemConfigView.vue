@@ -133,6 +133,23 @@
           <Field label="天气 API 地址">
             <UInput v-model="form.WEATHER_API_BASE_URL" placeholder="可选，默认留空使用内置地址" />
           </Field>
+          <Field label="天气城市名称">
+            <UInput v-model="form.WEATHER_CITY_NAME" placeholder="例如：深圳市" />
+          </Field>
+          <Field label="天气城市代码">
+            <div class="flex flex-wrap items-center gap-2">
+              <UInput v-model="form.WEATHER_CITY_CODE" placeholder="例如：440300（高德 adcode）" class="w-56" />
+              <UButton
+                variant="outline"
+                size="sm"
+                :loading="cityLookupLoading"
+                :disabled="!form.WEATHER_CITY_NAME.trim()"
+                @click="handleLookupWeatherCityCode"
+              >
+                自动查询代码
+              </UButton>
+            </div>
+          </Field>
           <Field label="助手 Webhook URL">
             <UInput v-model="form.N8N_ASSISTANT_WEBHOOK_URL" placeholder="https://your-n8n/webhook/assistant-chat" />
           </Field>
@@ -225,6 +242,7 @@
 import { reactive, onMounted, ref, computed, h } from 'vue'
 import { Save, Settings, ToggleRight, Cpu, Mail, ImagePlus, Trash2, Globe, Link } from 'lucide-vue-next'
 import { getAdminConfigs, bulkUpdateConfigs } from '@/api/system'
+import { lookupWeatherCityCode } from '@/api/ai'
 import { UCard, UInput, UButton, USwitch, toast } from '@/ui'
 
 const Field = (props: any, ctx: any) =>
@@ -264,6 +282,8 @@ interface ConfigForm {
   AI_MODEL: string
   WEATHER_API_KEY: string
   WEATHER_API_BASE_URL: string
+  WEATHER_CITY_NAME: string
+  WEATHER_CITY_CODE: string
   N8N_ASSISTANT_WEBHOOK_URL: string
   N8N_SECRET: string
   ASSISTANT_GUEST_DAILY_LIMIT: string
@@ -296,6 +316,8 @@ const form = reactive<ConfigForm>({
   AI_MODEL: '',
   WEATHER_API_KEY: '',
   WEATHER_API_BASE_URL: '',
+  WEATHER_CITY_NAME: '深圳市',
+  WEATHER_CITY_CODE: '440300',
   N8N_ASSISTANT_WEBHOOK_URL: '',
   N8N_SECRET: '',
   ASSISTANT_GUEST_DAILY_LIMIT: '3',
@@ -317,6 +339,7 @@ const boolForm = reactive({
 })
 
 const saving = ref(false)
+const cityLookupLoading = ref(false)
 const defaultCoverInputRef = ref<HTMLInputElement | null>(null)
 const defaultCoverImageUrl = ref('')
 const defaultCoverMaxSizeMb = computed(() => {
@@ -498,6 +521,30 @@ const handleSave = async () => {
     toast.error('保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+const handleLookupWeatherCityCode = async () => {
+  const keyword = form.WEATHER_CITY_NAME.trim()
+  if (!keyword) {
+    toast.warning('请先输入城市名称')
+    return
+  }
+  try {
+    cityLookupLoading.value = true
+    const res = await lookupWeatherCityCode(keyword)
+    const payload = res.data?.data
+    if (!payload?.code) {
+      toast.warning('未查询到城市代码')
+      return
+    }
+    form.WEATHER_CITY_NAME = payload.name || keyword
+    form.WEATHER_CITY_CODE = payload.code
+    toast.success(`已回填城市代码：${payload.code}`)
+  } catch {
+    toast.error('城市代码查询失败，请检查天气 API Key 或城市名称')
+  } finally {
+    cityLookupLoading.value = false
   }
 }
 

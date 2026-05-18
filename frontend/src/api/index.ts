@@ -4,7 +4,7 @@ import { useGuestStore } from '@/stores/guest'
 
 const request = axios.create({
   baseURL: '/api/v1',
-  timeout: 30000,
+  timeout: 60000,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',

@@ -89,6 +89,8 @@ logs/
 
 # Media
 media/
+!backend/app/modules/media/
+!backend/app/modules/media/**
 uploads/
 static/uploads/
 

@@ -5,6 +5,7 @@ import App from './App.vue'
 import './style.css'
 import 'highlight.js/styles/atom-one-dark.css'
 import { installConfirm } from './ui'
+import { reportInitialPerf } from './utils/perfBeacon'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -26,3 +27,4 @@ void siteStore.fetchSiteConfig().catch((err) => console.warn('[init] site config
 
 const savedTheme = localStorage.getItem('theme') || 'light'
 document.documentElement.classList.toggle('dark', savedTheme === 'dark')
+reportInitialPerf()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from redis.asyncio import Redis
 
 from app.common.response import success
@@ -59,6 +59,16 @@ async def get_weather(
     )
     
     return success(weather.model_dump())
+
+
+@router.get("/admin/weather/city-lookup", response_model=dict)
+async def lookup_weather_city_code(
+    keyword: str = Query(..., min_length=1, description="城市名称，例如 深圳"),
+    admin: AdminUser = Depends(get_current_admin),
+):
+    _ = admin
+    result = await service.lookup_amap_city_code(keyword)
+    return success(result)
 
 
 @router.post("/admin/comment-reply", response_model=dict)

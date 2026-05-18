@@ -77,7 +77,7 @@
 
               <div class="relative rounded-2xl border border-[var(--border)] bg-gradient-to-br from-[var(--brand)] to-[var(--accent)] p-5 text-white shadow-[var(--shadow-lg)] -rotate-1 mr-4">
                 <div class="flex items-center gap-2 text-[11px] opacity-90 mb-2">
-                  <CloudSun class="size-3" /> Now in {{ weather.city || '\u6df1\u5733' }}
+                  <CloudSun class="size-3" /> Now in {{ weather.city || weatherDisplayName }}
                 </div>
                 <div v-if="weatherLoading" class="space-y-2">
                   <div class="h-5 w-24 rounded bg-white/30 animate-pulse-soft"></div>
@@ -239,10 +239,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, useTemplateRef } from 'vue'
 import {
-  getArticles,
-  getArticleStatsSummary,
-  getCategories,
-  getTags,
+  getHomeAggregate,
   type Article,
   type Category,
   type Tag,
@@ -271,7 +268,7 @@ const categories = ref<Category[]>([])
 const tags = ref<Tag[]>([])
 
 const currentPage = ref(1)
-const pageSize = ref(8)
+const pageSize = ref(6)
 const total = ref(0)
 const totalViews = ref(0)
 const loading = ref(false)
@@ -286,6 +283,8 @@ const weather = ref({
 let weatherDelayTimer: number | null = null
 
 const stats = computed(() => ({ total: total.value }))
+const weatherDisplayName = computed(() => siteStore.config.weather_city_name || '\u6df1\u5733\u5e02')
+const weatherCityCode = computed(() => siteStore.config.weather_city_code || '440300')
 
 const today = computed(() =>
   new Date().toLocaleDateString('zh-CN', {
@@ -299,74 +298,43 @@ const formatNumber = (n: number) => {
   return n.toLocaleString('zh-CN')
 }
 
-const fetchArticles = async (syncLatestPreview = false) => {
+const fetchHomeAggregate = async (showLoading = true) => {
   try {
-    loading.value = true
-    const res = await getArticles({
+    if (showLoading) loading.value = true
+    const res = await getHomeAggregate({
       page: currentPage.value,
       page_size: pageSize.value,
-      is_published: true,
+      featured_page: featuredCurrentPage.value,
+      featured_page_size: featuredPageSize.value,
     })
-    const data = res.data?.data ?? { items: [], total: 0 }
-    const items = data.items ?? []
-    articles.value = items
-    total.value = data.total ?? 0
-    if (syncLatestPreview && currentPage.value === 1) {
-      latestArticles.value = items.slice(0, 5)
-    }
+    const data = res.data?.data
+    if (!data) return
+
+    const articlesData = data.articles ?? { items: [], total: 0 }
+    const featuredData = data.featured ?? { items: [], total: 0 }
+    articles.value = articlesData.items ?? []
+    total.value = articlesData.total ?? 0
+    latestArticles.value = data.latest_items ?? []
+    featuredArticle.value = (featuredData.items ?? [])[0] || null
+    featuredTotal.value = featuredData.total ?? 0
+    categories.value = data.categories ?? []
+    tags.value = data.tags ?? []
+    totalViews.value = data.total_views ?? totalViews.value
   } catch (e) {
     console.error(e)
-    toast.error('\u83b7\u53d6\u6587\u7ae0\u5217\u8868\u5931\u8d25')
+    toast.error('\u83b7\u53d6\u9996\u9875\u6570\u636e\u5931\u8d25')
   } finally {
-    loading.value = false
-  }
-}
-
-const fetchFeaturedArticle = async () => {
-  try {
-    const res = await getArticles({
-      page: featuredCurrentPage.value,
-      page_size: featuredPageSize.value,
-      is_published: true,
-      is_featured: true,
-    })
-    const data = res.data?.data ?? { items: [], total: 0 }
-    const items = data.items ?? []
-    featuredArticle.value = items[0] || null
-    featuredTotal.value = data.total ?? 0
-  } catch (e) {
-    console.warn('\u83b7\u53d6\u7cbe\u9009\u6587\u7ae0\u5931\u8d25', e)
-    featuredArticle.value = null
-    featuredTotal.value = 0
-  }
-}
-
-const handleFeaturedPageChange = () => {
-  fetchFeaturedArticle()
-}
-
-const fetchCategoriesAndTags = async () => {
-  try {
-    const [catRes, tagRes] = await Promise.all([getCategories(), getTags()])
-    categories.value = catRes.data?.data ?? []
-    tags.value = tagRes.data?.data ?? []
-  } catch (e) {
-    console.warn('\u83b7\u53d6\u5206\u7c7b/\u6807\u7b7e\u5931\u8d25', e)
-  }
-}
-
-const fetchTotalViews = async () => {
-  try {
-    const res = await getArticleStatsSummary()
-    totalViews.value = res.data?.data?.total_views ?? totalViews.value
-  } catch (e) {
-    console.warn('\u83b7\u53d6\u9605\u8bfb\u91cf\u7edf\u8ba1\u5931\u8d25', e)
+    if (showLoading) loading.value = false
   }
 }
 
 const handlePageChange = () => {
   scrollToArticles()
-  fetchArticles()
+  void fetchHomeAggregate(true)
+}
+
+const handleFeaturedPageChange = () => {
+  void fetchHomeAggregate(false)
 }
 
 const scrollToArticles = () => {
@@ -376,10 +344,10 @@ const scrollToArticles = () => {
 const fetchWeather = async () => {
   try {
     weatherLoading.value = true
-    const res = await getWeather({ city: '440300' })
+    const res = await getWeather({ city: weatherCityCode.value })
     const data = res.data?.data
     weather.value = {
-      city: data?.city || '\u672a\u77e5\u57ce\u5e02',
+      city: data?.city || weatherDisplayName.value || '\u672a\u77e5\u57ce\u5e02',
       description: data?.description || '\u672a\u77e5\u5929\u6c14',
       temperatureText: typeof data?.temperature === 'number' ? `${Math.round(data.temperature)}\u00b0C` : '--',
       feelsLikeText: typeof data?.feels_like === 'number' ? `${Math.round(data.feels_like)}\u00b0C` : '--',
@@ -396,19 +364,21 @@ const scheduleWeatherFetch = () => {
   if (weatherDelayTimer !== null) {
     window.clearTimeout(weatherDelayTimer)
   }
+  const idleCb = (window as Window & { requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number }).requestIdleCallback
+  if (typeof idleCb === 'function') {
+    idleCb(() => {
+      void fetchWeather()
+    }, { timeout: 3000 })
+    return
+  }
   weatherDelayTimer = window.setTimeout(() => {
     weatherDelayTimer = null
     void fetchWeather()
-  }, 500)
+  }, 2500)
 }
 
 onMounted(async () => {
-  await Promise.all([
-    fetchArticles(true),
-    fetchTotalViews(),
-    fetchFeaturedArticle(),
-    fetchCategoriesAndTags(),
-  ])
+  await fetchHomeAggregate(true)
   scheduleWeatherFetch()
 })
 

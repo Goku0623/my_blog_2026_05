@@ -45,17 +45,23 @@ function Test-Docker {
 function Start-Dev {
     Write-Info "启动开发环境..."
     
-    if (-not (Test-Path "backend\.env")) {
-        Write-Warn "未找到 backend\.env，从 backend\.env.example 复制"
-        Copy-Item "backend\.env.example" "backend\.env"
-        Write-Warn "请编辑 backend\.env 填写必要的配置"
+    if (-not (Test-Path ".env")) {
+        Write-Warn "未找到 .env，从 .env.example 复制"
+        Copy-Item ".env.example" ".env"
+        Write-Warn "请编辑 .env 填写 Docker 编排配置（数据库/端口/Flower 认证）"
+    }
+
+    if (-not (Test-Path "backend\.env.docker")) {
+        Write-Warn "未找到 backend\.env.docker，从 backend\.env.docker.example 复制"
+        Copy-Item "backend\.env.docker.example" "backend\.env.docker"
+        Write-Warn "请编辑 backend\.env.docker 填写应用配置"
     }
     
     docker-compose up -d --build
     Write-Info "开发环境已启动"
     Write-Info "前端（Nginx）: http://localhost"
     Write-Info "后端 API: http://localhost:8000"
-    Write-Info "API 文档: http://localhost:8000/docs"
+    Write-Info "API 文档: http://localhost:8000/api/docs"
     Write-Info "Flower 监控: http://localhost:5555"
 }
 
@@ -63,8 +69,13 @@ function Start-Dev {
 function Start-Prod {
     Write-Info "启动生产环境..."
     
-    if (-not (Test-Path "backend\.env")) {
-        Write-Error-Custom "未找到 backend\.env，请先配置环境变量"
+    if (-not (Test-Path ".env")) {
+        Write-Error-Custom "未找到 .env，请先配置 Docker 编排环境变量"
+        exit 1
+    }
+
+    if (-not (Test-Path "backend\.env.docker")) {
+        Write-Error-Custom "未找到 backend\.env.docker，请先配置应用环境变量"
         exit 1
     }
     
@@ -205,6 +216,25 @@ function Show-Stats {
 }
 
 # 帮助信息
+function Invoke-PurgeTestData {
+    param([string]$Mode)
+
+    Write-Warn "即将清理测试数据（保留管理员账户与系统配置）"
+    $confirm = Read-Host "确定继续吗？(y/N)"
+    if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+        Write-Info "操作已取消"
+        return
+    }
+
+    if ($Mode -eq "with-uploads") {
+        Write-Warn "将同时清空 backend/uploads 下文件，请确认系统配置中的媒体 URL 可重建"
+        docker-compose exec backend python -m scripts.purge_test_data --yes --clear-uploads
+    } else {
+        docker-compose exec backend python -m scripts.purge_test_data --yes
+    }
+}
+
+# 帮助信息
 function Show-Help {
     Write-Host @"
 
@@ -225,6 +255,8 @@ Docker Compose 管理脚本 (PowerShell)
   migrate:create    创建新的数据库迁移
   backup            备份数据库
   restore <file>    从备份恢复数据库
+  purge:test-data [with-uploads]
+                    清理测试数据（保留管理员账户与系统配置）
   
   shell [service]   进入容器 shell（默认 backend）
   stats             查看资源使用情况
@@ -259,6 +291,7 @@ function Main {
         "migrate:create" { New-Migration -Name $Arg1 }
         "backup" { Backup-Database }
         "restore" { Restore-Database -BackupFile $Arg1 }
+        "purge:test-data" { Invoke-PurgeTestData -Mode $Arg1 }
         "shell" { Enter-Shell -Service $Arg1 }
         "stats" { Show-Stats }
         "clean" { Clear-DockerResources }

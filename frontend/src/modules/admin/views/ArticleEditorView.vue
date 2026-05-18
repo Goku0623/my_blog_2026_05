@@ -41,7 +41,7 @@
             </UButton>
             <UInput
               v-model="contentImageUrl"
-              placeholder="图片 URL（自动转为 base64 并插入）"
+              placeholder="图片 URL（自动转存到服务器并插入）"
               class="min-w-[280px] flex-1"
             />
             <UButton
@@ -53,7 +53,7 @@
               从URL插入
             </UButton>
             <p class="text-xs text-[var(--text-muted)]">
-              自动压缩并以 base64 插入 Markdown（单张上限约 {{ contentImageMaxSizeMb }}MB）
+              自动压缩并转存到服务器后插入 Markdown（单张上限约 {{ contentImageMaxSizeMb }}MB）
             </p>
           </div>
           <div class="rounded-xl border border-[var(--border-strong)] overflow-hidden grid grid-cols-1 lg:grid-cols-2 min-h-[480px]">
@@ -118,7 +118,7 @@
             </div>
             <div class="space-y-1.5">
               <label class="text-xs text-[var(--text-soft)]">封面图</label>
-              <UInput v-model="coverImageUrl" placeholder="图片 URL（可选，提交时自动转 base64）" />
+              <UInput v-model="coverImageUrl" placeholder="图片 URL（可选，点击后自动转存）" />
               <div class="flex flex-wrap gap-2">
                 <input
                   ref="coverInputRef"
@@ -147,7 +147,7 @@
                   清除
                 </UButton>
               </div>
-              <p class="text-xs text-[var(--text-muted)]">支持本地上传或 URL，最终都会以 base64 存储</p>
+              <p class="text-xs text-[var(--text-muted)]">支持本地上传或 URL，最终都转存为服务器媒体 URL</p>
               <p class="text-xs text-[var(--text-muted)]">当前自动压缩上限：{{ coverMaxSizeMb }}MB</p>
               <img
                 v-if="formData.cover_image"
@@ -216,6 +216,7 @@ import {
   saveArticleDraftCopy, publishDraftToSource,
   getCategories, getTags, type Category, type Tag,
 } from '@/api/articles'
+import { fetchMediaImage, uploadMediaImage } from '@/api/media'
 import { getSiteConfig } from '@/api/system'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { formatDateTime } from '@/utils/time'
@@ -248,8 +249,6 @@ const maxCoverImageBytes = computed(() => coverMaxSizeMb.value * 1024 * 1024)
 const contentImageMaxSizeMb = computed(() => Math.max(3, Math.min(10, coverMaxSizeMb.value * 2)))
 const maxContentImageBytes = computed(() => contentImageMaxSizeMb.value * 1024 * 1024)
 const PREVIEW_PLACEHOLDER_HTML = '<p class="text-sm text-[var(--text-muted)] text-center mt-12">在左侧输入 Markdown 内容…</p>'
-const CONTENT_IMAGE_REF_PREFIX = 'imgref:'
-const contentImageRefs = ref<Record<string, string>>({})
 
 const toDateTimeLocal = (value?: string | null) => {
   if (!value) return ''
@@ -332,8 +331,7 @@ const handleBeforeUnload = (event: BeforeUnloadEvent) => {
 }
 
 const renderPreview = () => {
-  const contentForPreview = expandContentImageRefs(formData.content)
-  renderedPreview.value = contentForPreview ? render(contentForPreview) : PREVIEW_PLACEHOLDER_HTML
+  renderedPreview.value = formData.content ? render(formData.content) : PREVIEW_PLACEHOLDER_HTML
 }
 
 const schedulePreviewRender = (immediate = false) => {
@@ -349,37 +347,6 @@ const schedulePreviewRender = (immediate = false) => {
     previewRenderTimer = null
     renderPreview()
   }, 120)
-}
-
-const generateContentImageRefKey = () => {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-const createContentImageRefMarkdown = (altText: string, imageDataUrl: string) => {
-  const key = generateContentImageRefKey()
-  contentImageRefs.value[key] = imageDataUrl
-  return `![${altText}](${CONTENT_IMAGE_REF_PREFIX}${key})`
-}
-
-const expandContentImageRefs = (markdown: string) => {
-  if (!markdown) return ''
-  return markdown.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (matched, alt, src) => {
-    if (!src.startsWith(CONTENT_IMAGE_REF_PREFIX)) return matched
-    const refKey = src.slice(CONTENT_IMAGE_REF_PREFIX.length)
-    const actualSrc = contentImageRefs.value[refKey]
-    if (!actualSrc) return matched
-    return `![${alt}](${actualSrc})`
-  })
-}
-
-const compactInlineBase64Images = (markdown: string) => {
-  if (!markdown) return ''
-  return markdown.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (matched, alt, src) => {
-    if (!src.startsWith('data:image/')) return matched
-    const key = generateContentImageRefKey()
-    contentImageRefs.value[key] = src
-    return `![${alt}](${CONTENT_IMAGE_REF_PREFIX}${key})`
-  })
 }
 
 const fetchMetadata = async () => {
@@ -400,8 +367,7 @@ const fetchArticle = async () => {
     const res = await getAdminArticle(articleId.value)
     const data: any = res.data?.data ?? {}
     formData.title = data.title ?? ''
-    contentImageRefs.value = {}
-    formData.content = compactInlineBase64Images(data.content ?? '')
+    formData.content = data.content ?? ''
     formData.summary = data.summary ?? ''
     formData.category_id = data.category?.id ?? data.category_id
     formData.tag_ids = (data.tags ?? []).map((t: any) => t.id)
@@ -523,7 +489,12 @@ const resizeImageBlob = async (blob: Blob, maxLongEdge = 1600): Promise<Blob> =>
   return resizedBlob
 }
 
-const convertBlobToCoverBase64 = async (blob: Blob, sourceLabel: string) => {
+const makeUploadFileFromBlob = (blob: Blob, fallbackName: string) => {
+  const ext = blob.type.includes('png') ? 'png' : 'jpg'
+  return new File([blob], `${fallbackName}.${ext}`, { type: blob.type || 'image/jpeg' })
+}
+
+const uploadCoverBlob = async (blob: Blob, sourceLabel: string) => {
   if (!blob.type.startsWith('image/')) {
     toast.warning('请选择图片文件')
     return
@@ -533,14 +504,16 @@ const convertBlobToCoverBase64 = async (blob: Blob, sourceLabel: string) => {
   if (blob.size > maxCoverImageBytes.value) {
     finalBlob = await compressImageBlob(blob, maxCoverImageBytes.value)
   }
-
-  const result = await blobToDataUrl(finalBlob)
-  if (!result.startsWith('data:image/')) {
-    throw new Error('invalid data url')
+  const uploadFile = makeUploadFileFromBlob(finalBlob, `cover-${Date.now()}`)
+  const response = await uploadMediaImage(uploadFile, 'cover')
+  const uploadedUrl = response.data?.data?.url
+  if (!uploadedUrl) {
+    throw new Error('upload failed')
   }
-  formData.cover_image = result
+  formData.cover_image = uploadedUrl
+  coverImageUrl.value = uploadedUrl
   const sizeKb = Math.round(finalBlob.size / 1024)
-  toast.success(`${sourceLabel}已转换为 base64（约 ${sizeKb}KB）`)
+  toast.success(`${sourceLabel}已上传（约 ${sizeKb}KB）`)
 }
 
 const handleCoverFileChange = async (event: Event) => {
@@ -549,21 +522,12 @@ const handleCoverFileChange = async (event: Event) => {
   if (!file) return
 
   try {
-    await convertBlobToCoverBase64(file, '封面图')
+    await uploadCoverBlob(file, '封面图')
   } catch {
     toast.error('图片处理失败，请重试')
   } finally {
     target.value = ''
   }
-}
-
-const blobToDataUrl = (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
-    reader.onerror = () => reject(new Error('read blob failed'))
-    reader.readAsDataURL(blob)
-  })
 }
 
 const handleConvertCoverUrl = async () => {
@@ -578,15 +542,14 @@ const handleConvertCoverUrl = async () => {
   }
 
   try {
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error('fetch failed')
-    }
-    const blob = await response.blob()
-    await convertBlobToCoverBase64(blob, 'URL 图片')
+    const response = await fetchMediaImage(url, 'cover')
+    const uploadedUrl = response.data?.data?.url
+    if (!uploadedUrl) throw new Error('fetch media failed')
+    formData.cover_image = uploadedUrl
+    coverImageUrl.value = uploadedUrl
+    toast.success('URL 图片已转存到服务器')
   } catch {
-    formData.cover_image = ''
-    toast.info('前端转换失败，保存时将由后端尝试转换该 URL')
+    toast.error('URL 图片转存失败，请检查链接是否可访问')
   }
 }
 
@@ -632,16 +595,15 @@ const handleContentImageChange = async (event: Event) => {
     if (finalBlob.size > maxContentImageBytes.value) {
       finalBlob = await compressImageBlob(finalBlob, maxContentImageBytes.value, 1600)
     }
-    const imageDataUrl = await blobToDataUrl(finalBlob)
-    if (!imageDataUrl.startsWith('data:image/')) {
-      throw new Error('invalid data url')
-    }
+    const uploadFile = makeUploadFileFromBlob(finalBlob, `content-${Date.now()}`)
+    const uploadRes = await uploadMediaImage(uploadFile, 'content')
+    const imageUrl = uploadRes.data?.data?.url
+    if (!imageUrl) throw new Error('upload failed')
 
     const safeName = normalizeContentImageName(file.name || 'image')
-    const shortRefMarkdown = createContentImageRefMarkdown(safeName, imageDataUrl)
-    const markdown = `\n${shortRefMarkdown}\n`
+    const markdown = `\n![${safeName}](${imageUrl})\n`
     insertTextAtCursor(markdown)
-    toast.success('正文图片已插入（短引用展示）')
+    toast.success('正文图片已上传并插入')
   } catch {
     toast.error('正文图片处理失败，请重试')
   } finally {
@@ -662,31 +624,16 @@ const handleInsertContentImageByUrl = async () => {
 
   try {
     convertingContentImageUrl.value = true
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error('fetch failed')
-    }
-    const blob = await response.blob()
-    if (!blob.type.startsWith('image/')) {
-      toast.warning('URL 对应资源不是图片')
-      return
-    }
-    let finalBlob: Blob = await resizeImageBlob(blob, 1600)
-    if (finalBlob.size > maxContentImageBytes.value) {
-      finalBlob = await compressImageBlob(finalBlob, maxContentImageBytes.value, 1600)
-    }
-    const imageDataUrl = await blobToDataUrl(finalBlob)
-    if (!imageDataUrl.startsWith('data:image/')) {
-      throw new Error('invalid data url')
-    }
+    const response = await fetchMediaImage(url, 'content')
+    const imageUrl = response.data?.data?.url
+    if (!imageUrl) throw new Error('fetch media failed')
     const rawName = url.split('/').pop() || 'image-from-url'
     const safeName = normalizeContentImageName(rawName)
-    const shortRefMarkdown = createContentImageRefMarkdown(safeName, imageDataUrl)
-    insertTextAtCursor(`\n${shortRefMarkdown}\n`)
+    insertTextAtCursor(`\n![${safeName}](${imageUrl})\n`)
     contentImageUrl.value = ''
-    toast.success('URL 图片已转换并插入（短引用展示）')
+    toast.success('URL 图片已转存并插入')
   } catch {
-    toast.error('URL 图片处理失败，可能受跨域限制')
+    toast.error('URL 图片处理失败，请确认链接可访问')
   } finally {
     convertingContentImageUrl.value = false
   }
@@ -694,10 +641,7 @@ const handleInsertContentImageByUrl = async () => {
 
 const saveLocalDraft = () => {
   if (isEdit.value) return
-  localStorage.setItem('article_draft', JSON.stringify({
-    form: formData,
-    contentImageRefs: contentImageRefs.value,
-  }))
+  localStorage.setItem('article_draft', JSON.stringify(formData))
   lastSaved.value = formatDateTime(new Date().toISOString())
 }
 
@@ -707,14 +651,7 @@ const loadLocalDraft = () => {
   if (!raw) return
   try {
     const parsed = JSON.parse(raw)
-    if (parsed?.form) {
-      Object.assign(formData, parsed.form)
-      contentImageRefs.value = parsed.contentImageRefs ?? {}
-    } else {
-      Object.assign(formData, parsed)
-      contentImageRefs.value = {}
-      formData.content = compactInlineBase64Images(formData.content ?? '')
-    }
+    Object.assign(formData, parsed)
     toast.info('已恢复本地草稿')
   } catch { /* ignore */ }
 }
@@ -756,7 +693,7 @@ const submit = async (publish: boolean) => {
     const normalizedUrl = coverImageUrl.value.trim()
     const payload = {
       ...formData,
-      content: expandContentImageRefs(formData.content),
+      content: formData.content,
       cover_image: normalizedBase64 || normalizedUrl || null,
       scheduled_publish_at: publish ? null : toIsoStringOrNull(formData.scheduled_publish_at),
     }

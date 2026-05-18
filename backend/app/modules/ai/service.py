@@ -23,8 +23,9 @@ from app.modules.articles.service import ArticleService
 from app.modules.system.models import SiteConfig
 from app.modules.comments.models import Comment
 
-SHENZHEN_CITY_CODE = "440300"
-WEATHER_CACHE_PREFIX = f"weather:daily:amap:{SHENZHEN_CITY_CODE}"
+DEFAULT_WEATHER_CITY_CODE = "440300"
+DEFAULT_WEATHER_CITY_NAME = "深圳市"
+WEATHER_CACHE_PREFIX = "weather:daily:amap"
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -169,6 +170,53 @@ async def call_amap_weather(city: str, api_key: str, base_url: Optional[str] = N
         return None
 
 
+async def lookup_amap_city_code(keyword: str, base_url: Optional[str] = None) -> Dict[str, str]:
+    api_key = await get_config_value("WEATHER_API_KEY")
+    if not api_key:
+        raise BusinessException(500, "天气 API 密钥未配置")
+
+    query = (keyword or "").strip()
+    if not query:
+        raise BusinessException(400, "城市名称不能为空")
+
+    endpoint = f"{(base_url or 'https://restapi.amap.com').rstrip('/')}/v3/config/district"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                endpoint,
+                params={
+                    "key": api_key,
+                    "keywords": query,
+                    "subdistrict": 0,
+                    "extensions": "base",
+                },
+            )
+        if response.status_code != 200:
+            raise BusinessException(502, "城市编码查询失败")
+
+        data = response.json()
+        if data.get("status") != "1":
+            raise BusinessException(400, data.get("info") or "城市编码查询失败")
+
+        districts = data.get("districts") or []
+        if not districts:
+            raise NotFoundException("未找到匹配城市，请检查名称")
+
+        target = districts[0]
+        adcode = str(target.get("adcode") or "").strip()
+        name = str(target.get("name") or query).strip()
+        if not adcode:
+            raise NotFoundException("未找到可用城市代码")
+
+        return {"name": name, "code": adcode}
+    except BusinessException:
+        raise
+    except NotFoundException:
+        raise
+    except Exception:
+        raise BusinessException(500, "城市编码查询异常")
+
+
 async def call_baidu_weather(lat: float, lon: float, api_key: str, base_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """调用百度地图天气 API"""
     try:
@@ -257,21 +305,26 @@ async def get_weather(
 ) -> WeatherResponse:
     api_key = await get_config_value("WEATHER_API_KEY")
     weather_api_base_url = await get_config_value("WEATHER_API_BASE_URL")
+    configured_city_code = await get_config_value("WEATHER_CITY_CODE", DEFAULT_WEATHER_CITY_CODE)
+    configured_city_name = await get_config_value("WEATHER_CITY_NAME", DEFAULT_WEATHER_CITY_NAME)
 
     if not api_key:
         raise BusinessException(500, "天气 API 密钥未配置")
 
-    # 锁定深圳：只使用高德城市编码 440300，缓存维度按“天”组织。
+    target_city_code = (city or configured_city_code or DEFAULT_WEATHER_CITY_CODE).strip()
+    target_city_name = (configured_city_name or DEFAULT_WEATHER_CITY_NAME).strip()
+
+    # 缓存维度按“天+城市编码”组织，便于后台切换城市后即时生效。
     date_key = datetime.now(SHANGHAI_TZ).strftime("%Y%m%d")
-    today_cache_key = f"{WEATHER_CACHE_PREFIX}:{date_key}"
-    latest_cache_key = f"{WEATHER_CACHE_PREFIX}:latest"
+    today_cache_key = f"{WEATHER_CACHE_PREFIX}:{target_city_code}:{date_key}"
+    latest_cache_key = f"{WEATHER_CACHE_PREFIX}:{target_city_code}:latest"
 
     if redis:
         cached = await redis.get(today_cache_key)
         if cached:
             return WeatherResponse(**json.loads(cached))
 
-    weather_data = await call_amap_weather(SHENZHEN_CITY_CODE, api_key, weather_api_base_url)
+    weather_data = await call_amap_weather(target_city_code, api_key, weather_api_base_url)
 
     if not weather_data:
         if redis:
@@ -279,6 +332,9 @@ async def get_weather(
             if latest_cached:
                 return WeatherResponse(**json.loads(latest_cached))
         raise BusinessException(500, "天气 API 调用失败")
+
+    if not weather_data.get("city"):
+        weather_data["city"] = target_city_name
 
     weather_response = WeatherResponse(**weather_data)
 

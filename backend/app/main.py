@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import init_db, close_db
@@ -16,6 +19,7 @@ from app.modules.ai.router import router as ai_router
 from app.modules.system.router import router as system_router
 from app.modules.statistics.router import router as statistics_router
 from app.modules.assistant.router import router as assistant_router
+from app.modules.media.router import router as media_router
 from app.modules.ai.init_config import init_ai_configs
 from app.modules.system.service import SiteConfigService
 from app.modules.system.models import SiteConfig
@@ -71,6 +75,9 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 app.add_middleware(
@@ -80,6 +87,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 setup_middlewares(app)
 setup_exception_handlers(app)
@@ -92,6 +100,11 @@ app.include_router(ai_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")
 app.include_router(statistics_router, prefix="/api/v1")
 app.include_router(assistant_router, prefix="/api/v1")
+app.include_router(media_router, prefix="/api/v1")
+
+upload_root = Path(settings.UPLOAD_DIR).resolve()
+upload_root.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(upload_root)), name="media")
 
 
 @app.get("/")

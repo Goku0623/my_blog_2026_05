@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, Request, Query
+from fastapi import APIRouter, Depends, Request, Query, Response, status
 from typing import Optional
+import logging
 
 from app.modules.system.schemas import (
     SiteConfigOut,
@@ -14,6 +15,7 @@ from app.modules.system.schemas import (
     ScheduledTaskUpdate,
     AdminNotificationOut,
     AdminNotificationUnreadCount,
+    PerfBeaconPayload,
 )
 from app.modules.system.service import (
     SiteConfigService,
@@ -29,12 +31,35 @@ from app.common.response import success
 
 
 router = APIRouter(tags=["System"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/system/configs/public", response_model=dict)
 async def get_public_configs():
     configs = await SiteConfigService.get_public_configs()
     return success(configs, "获取公开配置成功")
+
+
+@router.post("/system/perf/beacon", response_model=dict)
+async def report_frontend_perf(
+    payload: PerfBeaconPayload,
+    request: Request,
+):
+    ip = get_client_ip(request)
+    ua = request.headers.get("user-agent", "")
+    logger.info(
+        "perf_beacon path=%s nav=%s duration=%s dcl=%s load=%s fcp=%s lcp=%s ip=%s ua=%s",
+        payload.path,
+        payload.navigation_type,
+        payload.duration_ms,
+        payload.dcl_ms,
+        payload.load_ms,
+        payload.fcp_ms,
+        payload.lcp_ms,
+        ip,
+        ua[:128],
+    )
+    return success(None, "ok")
 
 
 @router.get("/admin/system/configs", response_model=dict)
@@ -267,6 +292,11 @@ async def get_unread_notification_count(
 ):
     count = await AdminNotificationService.get_unread_count()
     return success(AdminNotificationUnreadCount(count=count).model_dump())
+
+
+@router.options("/admin/system/notifications/unread-count", include_in_schema=False)
+async def options_unread_notification_count():
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/admin/system/notifications/{notification_id}/read", response_model=dict)

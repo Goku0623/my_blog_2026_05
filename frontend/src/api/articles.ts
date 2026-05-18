@@ -64,6 +64,15 @@ export interface ArticleStatsSummary {
   total_views: number
 }
 
+export interface HomeAggregateResponse {
+  articles: ArticleListResponse
+  featured: ArticleListResponse
+  latest_items: Article[]
+  categories: Category[]
+  tags: Tag[]
+  total_views: number
+}
+
 export interface Category {
   id: number
   name: string
@@ -92,6 +101,15 @@ export const getArticles = (params: ArticleListParams) => {
 
 export const getArticleStatsSummary = () => {
   return request.get<{ data: ArticleStatsSummary }>('/articles/stats/summary')
+}
+
+export const getHomeAggregate = (params: {
+  page: number
+  page_size: number
+  featured_page: number
+  featured_page_size: number
+}) => {
+  return request.get<{ data: HomeAggregateResponse }>('/home/aggregate', { params })
 }
 
 export const getArticle = (slug: string) => {

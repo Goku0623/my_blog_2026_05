@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 
@@ -7,7 +8,7 @@ from app.modules.articles.schemas import (
     ArticleCreate, ArticleUpdate, ArticleOut, ArticleListItem,
     PaginatedArticles
 )
-from app.modules.articles.service import CategoryService, TagService, ArticleService
+from app.modules.articles.service import CategoryService, TagService, ArticleService, ArticleCacheService
 from app.modules.articles.models import ArticleDraftLink
 from app.core.dependencies import get_current_admin, get_client_ip
 from app.modules.auth.models import AdminUser
@@ -55,7 +56,6 @@ async def _serialize_article_list_item(article, draft_link_map: Optional[dict[in
         "status": article.status,
         "category": CategoryOut.model_validate(category).model_dump() if category else None,
         "tags": tags,
-        # 列表只返回缩略图，避免传输完整原图占用大量带宽。
         "cover_image_thumb": article.cover_image_thumb,
         "view_count": article.view_count,
         "is_featured": article.is_featured,
@@ -65,6 +65,21 @@ async def _serialize_article_list_item(article, draft_link_map: Optional[dict[in
         "updated_at": article.updated_at,
         "is_draft_copy": bool(draft_link),
         "source_article_id": draft_link.source_article_id if draft_link else None,
+    }
+
+
+async def _serialize_article_page_result(result: dict) -> dict:
+    draft_link_map = await ArticleService.get_draft_links_by_draft_ids([article.id for article in result["items"]])
+    serialized_items = []
+    for article in result["items"]:
+        serialized_items.append(await _serialize_article_list_item(article, draft_link_map))
+    return {
+        "items": serialized_items,
+        "total": result.get("total", 0),
+        "total_views": result.get("total_views", 0),
+        "page": result.get("page", 1),
+        "page_size": result.get("page_size", 10),
+        "total_pages": result.get("total_pages", 0),
     }
 
 
@@ -78,6 +93,11 @@ async def list_articles_public(
     is_featured: Optional[bool] = None
 ):
     try:
+        cache_key = f"{page}:{page_size}:{category_id}:{tag_id}:{keyword}:{is_featured}"
+        cached = await ArticleCacheService.get_article_list(cache_key)
+        if cached:
+            return success(cached)
+
         result = await ArticleService.list_articles(
             page=page,
             page_size=page_size,
@@ -88,17 +108,76 @@ async def list_articles_public(
             is_admin=False
         )
 
-        draft_link_map = await ArticleService.get_draft_links_by_draft_ids([article.id for article in result["items"]])
-        serialized_items = []
-        for article in result["items"]:
-            serialized_items.append(await _serialize_article_list_item(article, draft_link_map))
-
-        result["items"] = serialized_items
+        result = await _serialize_article_page_result(result)
+        await ArticleCacheService.set_article_list(cache_key, result)
         return success(result)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while fetching articles"
+        )
+
+
+@router.get("/home/aggregate", response_model=dict)
+async def get_home_aggregate(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(6, ge=1, le=20),
+    featured_page: int = Query(1, ge=1),
+    featured_page_size: int = Query(1, ge=1, le=5),
+):
+    try:
+        list_key = f"home:{page}:{page_size}:{featured_page}:{featured_page_size}"
+        cached = await ArticleCacheService.get_article_list(list_key)
+        if cached:
+            return success(cached)
+
+        (
+            articles_result,
+            featured_result,
+            latest_result,
+            categories,
+            tags,
+            dashboard,
+        ) = await asyncio.gather(
+            ArticleService.list_articles(
+                page=page,
+                page_size=page_size,
+                is_admin=False,
+            ),
+            ArticleService.list_articles(
+                page=featured_page,
+                page_size=featured_page_size,
+                is_featured=True,
+                is_admin=False,
+            ),
+            ArticleService.list_articles(
+                page=1,
+                page_size=5,
+                is_admin=False,
+            ),
+            CategoryService.list_categories(is_active_only=True),
+            TagService.list_tags(),
+            StatisticsService.get_dashboard_data(),
+        )
+
+        serialized_articles = await _serialize_article_page_result(articles_result)
+        serialized_featured = await _serialize_article_page_result(featured_result)
+        serialized_latest = await _serialize_article_page_result(latest_result)
+
+        payload = {
+            "articles": serialized_articles,
+            "featured": serialized_featured,
+            "latest_items": serialized_latest["items"][:5],
+            "categories": [CategoryOut.model_validate(cat).model_dump() for cat in categories],
+            "tags": [TagOut.model_validate(tag).model_dump() for tag in tags],
+            "total_views": dashboard.total_views,
+        }
+        await ArticleCacheService.set_article_list(list_key, payload)
+        return success(payload)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while fetching home aggregate data",
         )
 
 
@@ -154,6 +233,14 @@ async def get_articles_stats_summary():
 @router.get("/articles/{slug}", response_model=dict)
 async def get_article_by_slug(slug: str, request: Request):
     try:
+        cached = await ArticleCacheService.get_article_detail(slug)
+        if cached:
+            ip_address = get_client_ip(request)
+            user_agent = request.headers.get("User-Agent", "")
+            await ArticleService.increment_view_count(cached["id"], ip_address, user_agent)
+            cached["view_count"] = cached.get("view_count", 0) + 1
+            return success(cached)
+
         article = await ArticleService.get_article_by_slug(slug, is_admin=False)
         
         if not article:
@@ -182,28 +269,26 @@ async def get_article_by_slug(slug: str, request: Request):
             "slug": article.slug,
             "summary": article.summary,
             "content": article.content,
-            "rendered_content": article.rendered_content,
             "status": article.status,
-            "category": CategoryOut.model_validate(category) if category else None,
-            "tags": [TagOut.model_validate(tag) for tag in tags],
-            "cover_image": article.cover_image,
-            "cover_image_thumb": article.cover_image_thumb,
-            "cover_image_large": article.cover_image_large,
+            "category": CategoryOut.model_validate(category).model_dump() if category else None,
+            "tags": [TagOut.model_validate(tag).model_dump() for tag in tags],
+            # 详情页当前不使用封面字段，避免返回大体积 data URL 拖慢域名访问。
             "view_count": article.view_count,
             "is_featured": article.is_featured,
             "allow_comment": article.allow_comment,
             "seo_title": article.seo_title,
             "seo_description": article.seo_description,
             "seo_keywords": article.seo_keywords,
-            "scheduled_publish_at": article.scheduled_publish_at,
-            "published_at": article.published_at,
-            "created_at": article.created_at,
-            "updated_at": article.updated_at,
+            "scheduled_publish_at": article.scheduled_publish_at.isoformat() if article.scheduled_publish_at else None,
+            "published_at": article.published_at.isoformat() if article.published_at else None,
+            "created_at": article.created_at.isoformat() if article.created_at else None,
+            "updated_at": article.updated_at.isoformat() if article.updated_at else None,
         }
         draft_link = await ArticleService.get_draft_link_by_draft_id(article.id)
         article_dict["is_draft_copy"] = bool(draft_link)
         article_dict["source_article_id"] = draft_link.source_article_id if draft_link else None
         
+        await ArticleCacheService.set_article_detail(slug, article_dict)
         return success(article_dict)
     except HTTPException:
         raise
@@ -305,8 +390,6 @@ async def create_article(
             "category": CategoryOut.model_validate(category) if category else None,
             "tags": [TagOut.model_validate(tag) for tag in tags],
             "cover_image": article.cover_image,
-            "cover_image_thumb": article.cover_image_thumb,
-            "cover_image_large": article.cover_image_large,
             "view_count": article.view_count,
             "is_featured": article.is_featured,
             "allow_comment": article.allow_comment,
@@ -326,6 +409,7 @@ async def create_article(
             article_id=article.id,
             detail=f"创建文章：{article.title}",
         )
+        await ArticleCacheService.invalidate_all_article_lists()
         return success(article_dict, "Article created successfully")
     except BadRequestException as e:
         raise HTTPException(
@@ -372,8 +456,6 @@ async def get_article_admin(
             "category": CategoryOut.model_validate(category) if category else None,
             "tags": [TagOut.model_validate(tag) for tag in tags],
             "cover_image": article.cover_image,
-            "cover_image_thumb": article.cover_image_thumb,
-            "cover_image_large": article.cover_image_large,
             "view_count": article.view_count,
             "is_featured": article.is_featured if hasattr(article, "is_featured") else False,
             "allow_comment": article.allow_comment,
@@ -451,6 +533,8 @@ async def update_article(
             article_id=article.id,
             detail=f"更新文章：{article.title}",
         )
+        await ArticleCacheService.invalidate_article_detail(article.slug)
+        await ArticleCacheService.invalidate_all_article_lists()
         return success(article_dict, "Article updated successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -487,6 +571,8 @@ async def delete_article(
             article_id=article_id,
             detail=f"{'彻底删除' if hard_delete else '软删除'}文章：{article_title}",
         )
+        await ArticleCacheService.invalidate_article_detail(article.slug)
+        await ArticleCacheService.invalidate_all_article_lists()
         return success(None, "Article deleted successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -515,6 +601,8 @@ async def publish_article(
             article_id=article.id,
             detail=f"发布文章：{article.title}",
         )
+        await ArticleCacheService.invalidate_article_detail(article.slug)
+        await ArticleCacheService.invalidate_all_article_lists()
         return success({"status": article.status}, "Article published successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -543,6 +631,8 @@ async def unpublish_article(
             article_id=article.id,
             detail=f"下架文章：{article.title}",
         )
+        await ArticleCacheService.invalidate_article_detail(article.slug)
+        await ArticleCacheService.invalidate_all_article_lists()
         return success({"status": article.status}, "Article unpublished successfully")
     except NotFoundException as e:
         raise HTTPException(
@@ -642,11 +732,6 @@ async def publish_draft_to_source_article(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while publishing draft"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while unpublishing the article"
         )
 
 

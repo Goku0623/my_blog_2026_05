@@ -1,7 +1,7 @@
 # Makefile for Docker Compose Management
 # 简化 Docker 操作的快捷命令
 
-.PHONY: help dev prod down down-volumes restart logs status migrate migrate-create backup restore shell stats clean clean-all
+.PHONY: help dev prod down down-volumes restart logs status migrate migrate-create backup restore purge-test-data purge-test-data-with-uploads shell stats clean clean-all
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -38,23 +38,32 @@ help:
 
 ## dev: 启动开发环境
 dev:
-	@if [ ! -f backend/.env ]; then \
-		echo "${YELLOW}[WARN]${NC} 未找到 backend/.env，从 backend/.env.example 复制"; \
-		cp backend/.env.example backend/.env; \
-		echo "${YELLOW}[WARN]${NC} 请编辑 backend/.env 填写必要的配置"; \
+	@if [ ! -f .env ]; then \
+		echo "${YELLOW}[WARN]${NC} 未找到 .env，从 .env.example 复制"; \
+		cp .env.example .env; \
+		echo "${YELLOW}[WARN]${NC} 请编辑 .env 填写 Docker 编排配置（数据库/端口/Flower 认证）"; \
+	fi
+	@if [ ! -f backend/.env.docker ]; then \
+		echo "${YELLOW}[WARN]${NC} 未找到 backend/.env.docker，从 backend/.env.docker.example 复制"; \
+		cp backend/.env.docker.example backend/.env.docker; \
+		echo "${YELLOW}[WARN]${NC} 请编辑 backend/.env.docker 填写应用配置"; \
 	fi
 	@echo "${GREEN}[INFO]${NC} 启动开发环境..."
 	docker-compose up -d --build
 	@echo "${GREEN}[INFO]${NC} 开发环境已启动"
 	@echo "${GREEN}[INFO]${NC} 前端（Nginx）: http://localhost"
 	@echo "${GREEN}[INFO]${NC} 后端 API: http://localhost:8000"
-	@echo "${GREEN}[INFO]${NC} API 文档: http://localhost:8000/docs"
+	@echo "${GREEN}[INFO]${NC} API 文档: http://localhost:8000/api/docs"
 	@echo "${GREEN}[INFO]${NC} Flower 监控: http://localhost:5555"
 
 ## prod: 启动生产环境
 prod:
-	@if [ ! -f backend/.env ]; then \
-		echo "${YELLOW}[ERROR]${NC} 未找到 backend/.env，请先配置环境变量"; \
+	@if [ ! -f .env ]; then \
+		echo "${YELLOW}[ERROR]${NC} 未找到 .env，请先配置 Docker 编排环境变量"; \
+		exit 1; \
+	fi
+	@if [ ! -f backend/.env.docker ]; then \
+		echo "${YELLOW}[ERROR]${NC} 未找到 backend/.env.docker，请先配置应用环境变量"; \
 		exit 1; \
 	fi
 	@echo "${GREEN}[INFO]${NC} 启动生产环境..."
@@ -139,6 +148,26 @@ restore:
 		echo "${GREEN}[INFO]${NC} 恢复数据库从 $$file..."; \
 		docker-compose exec -T postgres psql -U blog_user blog_db < "$$file"; \
 		echo "${GREEN}[INFO]${NC} 数据库恢复完成"; \
+	else \
+		echo "${GREEN}[INFO]${NC} 操作已取消"; \
+	fi
+
+## purge-test-data: 清理测试数据（保留管理员账户与系统配置）
+purge-test-data:
+	@echo "${YELLOW}[WARN]${NC} 即将清理测试数据（保留管理员账户与系统配置）"
+	@read -p "确定继续吗？(y/N) " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		docker-compose exec backend python -m scripts.purge_test_data --yes; \
+	else \
+		echo "${GREEN}[INFO]${NC} 操作已取消"; \
+	fi
+
+## purge-test-data-with-uploads: 清理测试数据并清空上传目录
+purge-test-data-with-uploads:
+	@echo "${YELLOW}[WARN]${NC} 即将清理测试数据并清空 uploads（保留管理员账户与系统配置）"
+	@read -p "确定继续吗？(y/N) " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		docker-compose exec backend python -m scripts.purge_test_data --yes --clear-uploads; \
 	else \
 		echo "${GREEN}[INFO]${NC} 操作已取消"; \
 	fi

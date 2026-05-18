@@ -11,6 +11,8 @@ from app.common.exceptions import NotFoundException, BadRequestException
 
 class SiteConfigService:
     CONFIG_CACHE_TTL = 300
+    PUBLIC_CONFIG_CACHE_KEY = "config:public:bundle"
+    PUBLIC_CONFIG_CACHE_TTL = 180
     DEFAULT_ARTICLE_COVER_IMAGE_KEY = "DEFAULT_ARTICLE_COVER_IMAGE"
     DEFAULT_ARTICLE_COVER_IMAGE_THUMB_KEY = "DEFAULT_ARTICLE_COVER_IMAGE_THUMB"
     DEFAULT_ARTICLE_COVER_IMAGE_LARGE_KEY = "DEFAULT_ARTICLE_COVER_IMAGE_LARGE"
@@ -38,6 +40,8 @@ class SiteConfigService:
         "WEATHER_API_KEY": ("", "str", "天气API密钥", False),
         "WEATHER_PROVIDER": ("amap", "str", "天气服务商 (amap/baidu/openweather)", False),
         "WEATHER_API_BASE_URL": ("", "str", "天气 API 地址（可选，覆盖默认地址）", False),
+        "WEATHER_CITY_NAME": ("深圳市", "str", "天气展示城市名称（前端展示用）", True),
+        "WEATHER_CITY_CODE": ("440300", "str", "天气城市编码（如高德 adcode）", True),
         "N8N_ASSISTANT_WEBHOOK_URL": ("", "str", "AI 助手 N8N Webhook 地址", False),
         "ASSISTANT_GUEST_DAILY_LIMIT": ("3", "int", "AI 助手游客每日提问上限（0 表示不限额）", False),
         "N8N_SECRET": ("", "str", "N8N Webhook密钥", False),
@@ -168,6 +172,7 @@ class SiteConfigService:
         
         redis = await get_redis_client()
         await redis.delete(f"config:{key}")
+        await redis.delete(SiteConfigService.PUBLIC_CONFIG_CACHE_KEY)
         
         await OperationLogService.log_operation(
             operator=admin.username,
@@ -184,6 +189,7 @@ class SiteConfigService:
     @staticmethod
     async def bulk_update_configs(configs: List[Dict[str, str]], admin: AdminUser):
         updated = []
+        redis = await get_redis_client()
         for item in configs:
             key = item.get("key")
             value = item.get("value")
@@ -198,9 +204,9 @@ class SiteConfigService:
                     config.value = value
                     await config.save()
                     
-                    redis = await get_redis_client()
                     await redis.delete(f"config:{key}")
                     updated.append(config)
+        await redis.delete(SiteConfigService.PUBLIC_CONFIG_CACHE_KEY)
         
         await OperationLogService.log_operation(
             operator=admin.username,
@@ -253,6 +259,7 @@ class SiteConfigService:
         await redis.delete(f"config:{SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_KEY}")
         await redis.delete(f"config:{SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_THUMB_KEY}")
         await redis.delete(f"config:{SiteConfigService.DEFAULT_ARTICLE_COVER_IMAGE_LARGE_KEY}")
+        await redis.delete(SiteConfigService.PUBLIC_CONFIG_CACHE_KEY)
 
         return config, old_value, normalized_cover
 
@@ -263,6 +270,15 @@ class SiteConfigService:
         前端 SiteConfig 只关心一组固定字段，这里同时返回 raw 原始键值，
         方便管理端复用。
         """
+        redis = None
+        try:
+            redis = await get_redis_client()
+            cached = await redis.get(SiteConfigService.PUBLIC_CONFIG_CACHE_KEY)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            redis = None
+
         configs = await SiteConfig.filter(is_public=True)
         raw: Dict[str, str] = {c.key: c.value for c in configs}
 
@@ -291,7 +307,7 @@ class SiteConfigService:
         except Exception:
             pass
 
-        return {
+        payload = {
             "site_name": _str("SITE_NAME", "我的博客"),
             "site_description": _str("SITE_DESCRIPTION", "一个现代化的博客系统"),
             "site_keywords": _str("SITE_KEYWORDS", "博客,技术,分享"),
@@ -303,10 +319,22 @@ class SiteConfigService:
             "comment_audit_enabled": _bool("COMMENT_NEED_REVIEW", True),
             "ai_enabled": _bool("AI_ENABLED", True),
             "cover_image_max_size_mb": max(1, min(20, _int("COVER_IMAGE_MAX_SIZE_MB", 2))),
+            "weather_city_name": _str("WEATHER_CITY_NAME", "深圳市"),
+            "weather_city_code": _str("WEATHER_CITY_CODE", "440300"),
             "github_url": _str("GITHUB_URL", ""),
             "bilibili_url": _str("BILIBILI_URL", ""),
             "site_started_at": _str("SITE_STARTED_AT", ""),
         }
+        if redis:
+            try:
+                await redis.setex(
+                    SiteConfigService.PUBLIC_CONFIG_CACHE_KEY,
+                    SiteConfigService.PUBLIC_CONFIG_CACHE_TTL,
+                    json.dumps(payload, ensure_ascii=False),
+                )
+            except Exception:
+                pass
+        return payload
 
     @staticmethod
     async def init_default_configs():
@@ -558,6 +586,9 @@ class ScheduledTaskService:
 
 
 class AdminNotificationService:
+    UNREAD_COUNT_CACHE_KEY = "system:notifications:unread_count"
+    UNREAD_COUNT_CACHE_TTL = 15
+
     @staticmethod
     async def create_notification(
         type: str,
@@ -574,11 +605,35 @@ class AdminNotificationService:
             link=link,
             source_id=source_id,
         )
+        try:
+            redis = await get_redis_client()
+            await redis.delete(AdminNotificationService.UNREAD_COUNT_CACHE_KEY)
+        except Exception:
+            pass
 
     @staticmethod
     async def get_unread_count() -> int:
         from app.modules.system.models import AdminNotification
-        return await AdminNotification.filter(is_read=False).count()
+        redis = None
+        try:
+            redis = await get_redis_client()
+            cached = await redis.get(AdminNotificationService.UNREAD_COUNT_CACHE_KEY)
+            if cached is not None:
+                return int(cached)
+        except Exception:
+            redis = None
+
+        count = await AdminNotification.filter(is_read=False).count()
+        if redis:
+            try:
+                await redis.setex(
+                    AdminNotificationService.UNREAD_COUNT_CACHE_KEY,
+                    AdminNotificationService.UNREAD_COUNT_CACHE_TTL,
+                    str(count),
+                )
+            except Exception:
+                pass
+        return count
 
     @staticmethod
     async def list_notifications(page: int = 1, page_size: int = 20):
@@ -596,8 +651,18 @@ class AdminNotificationService:
         if notification:
             notification.is_read = True
             await notification.save()
+            try:
+                redis = await get_redis_client()
+                await redis.delete(AdminNotificationService.UNREAD_COUNT_CACHE_KEY)
+            except Exception:
+                pass
 
     @staticmethod
     async def mark_all_as_read():
         from app.modules.system.models import AdminNotification
         await AdminNotification.filter(is_read=False).update(is_read=True)
+        try:
+            redis = await get_redis_client()
+            await redis.delete(AdminNotificationService.UNREAD_COUNT_CACHE_KEY)
+        except Exception:
+            pass

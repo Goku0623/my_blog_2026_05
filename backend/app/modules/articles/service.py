@@ -1,6 +1,4 @@
 import uuid
-import base64
-import binascii
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
@@ -10,7 +8,6 @@ import io
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageOps, UnidentifiedImageError
 from tortoise.expressions import F
-from tortoise.functions import Sum
 from tortoise.queryset import Q
 
 from app.modules.articles.models import (
@@ -31,10 +28,63 @@ from app.modules.system.service import SiteConfigService
 from app.common.utils import generate_slug
 from app.common.exceptions import NotFoundException, BadRequestException
 from app.core.redis_client import get_redis_client
+from app.modules.media.service import MediaService
 import logging
 import math
 
 logger = logging.getLogger(__name__)
+
+
+class ArticleCacheService:
+    DETAIL_PREFIX = "article:detail:"
+    LIST_PREFIX = "article:list:"
+
+    @staticmethod
+    async def _redis():
+        from app.core.redis_client import get_redis_client
+        return await get_redis_client()
+
+    @staticmethod
+    async def get_article_detail(slug: str) -> dict | None:
+        r = await ArticleCacheService._redis()
+        data = await r.get(f"{ArticleCacheService.DETAIL_PREFIX}{slug}")
+        if data:
+            import json
+            return json.loads(data)
+        return None
+
+    @staticmethod
+    async def set_article_detail(slug: str, data: dict) -> None:
+        r = await ArticleCacheService._redis()
+        import json
+        await r.set(f"{ArticleCacheService.DETAIL_PREFIX}{slug}", json.dumps(data, default=str))
+
+    @staticmethod
+    async def get_article_list(key: str) -> dict | None:
+        r = await ArticleCacheService._redis()
+        data = await r.get(f"{ArticleCacheService.LIST_PREFIX}{key}")
+        if data:
+            import json
+            return json.loads(data)
+        return None
+
+    @staticmethod
+    async def set_article_list(key: str, data: dict) -> None:
+        r = await ArticleCacheService._redis()
+        import json
+        await r.set(f"{ArticleCacheService.LIST_PREFIX}{key}", json.dumps(data, default=str))
+
+    @staticmethod
+    async def invalidate_article_detail(slug: str) -> None:
+        r = await ArticleCacheService._redis()
+        await r.delete(f"{ArticleCacheService.DETAIL_PREFIX}{slug}")
+
+    @staticmethod
+    async def invalidate_all_article_lists() -> None:
+        r = await ArticleCacheService._redis()
+        keys = await r.keys(f"{ArticleCacheService.LIST_PREFIX}*")
+        if keys:
+            await r.delete(*keys)
 
 
 class CategoryService:
@@ -202,9 +252,9 @@ class ArticleService:
             raise BadRequestException("scheduled_publish_at must be in the future")
 
     # 16:9 固定尺寸缩略图，用于列表卡片与详情大图。
-    COVER_THUMB_SIZE = (400, 225)
+    COVER_THUMB_SIZE = (320, 180)
     COVER_LARGE_SIZE = (1600, 900)
-    COVER_THUMB_QUALITY = 80
+    COVER_THUMB_QUALITY = 70
     COVER_LARGE_QUALITY = 85
     _MARKDOWN_IMAGE_URL_RE = re.compile(
         r"!\[[^\]]*]\(\s*(?:<)?(?P<url>https?://[^\s>)]+)(?:>)?(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]+\)))?\s*\)",
@@ -228,12 +278,6 @@ class ArticleService:
         r'(<img\b[^>]*?\bsrc=["\'])(?P<url>https?://[^"\']+)(["\'][^>]*>)',
         flags=re.IGNORECASE,
     )
-
-    @staticmethod
-    def _limit_message(max_cover_bytes: int) -> str:
-        max_mb = round(max_cover_bytes / (1024 * 1024), 2)
-        return f"cover_image size cannot exceed {max_mb}MB"
-
     @staticmethod
     async def _get_max_cover_image_bytes() -> int:
         value = await SiteConfigService.get_config("COVER_IMAGE_MAX_SIZE_MB")
@@ -247,70 +291,14 @@ class ArticleService:
         return max_mb * 1024 * 1024
 
     @staticmethod
-    def _compress_image_bytes(image_bytes: bytes, max_cover_bytes: int) -> tuple[bytes, str]:
-        try:
-            with Image.open(io.BytesIO(image_bytes)) as original:
-                # 统一转为 JPEG 以获得更稳定的压缩率。
-                rgb_image = original.convert("RGB")
-                width, height = rgb_image.size
-                resampling = getattr(Image, "Resampling", Image).LANCZOS
-
-                for scale in ArticleService._RESIZE_SCALE_FACTORS:
-                    resized = rgb_image
-                    if scale != 1.0:
-                        resized = rgb_image.resize(
-                            (max(1, int(width * scale)), max(1, int(height * scale))),
-                            resampling,
-                        )
-
-                    for quality in ArticleService._ENCODE_QUALITIES:
-                        output = io.BytesIO()
-                        resized.save(output, format="JPEG", optimize=True, quality=quality)
-                        data = output.getvalue()
-                        if len(data) <= max_cover_bytes:
-                            return data, "image/jpeg"
-        except UnidentifiedImageError:
-            raise BadRequestException("cover_image is not a valid image")
-        except OSError:
-            raise BadRequestException("cover_image cannot be processed")
-
-        raise BadRequestException(
-            f"cover_image is too large and cannot be compressed below limit ({ArticleService._limit_message(max_cover_bytes)})"
+    async def _normalize_http_image_url_to_media_url(url: str, max_cover_bytes: int, folder: str) -> str:
+        saved = await MediaService.save_image_from_url(
+            url,
+            folder=folder,
+            max_bytes=max_cover_bytes,
+            max_edge=MediaService.MAX_IMAGE_EDGE,
         )
-
-    @staticmethod
-    def _to_data_url(image_bytes: bytes, content_type: str) -> str:
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        return f"data:{content_type};base64,{encoded}"
-
-    @staticmethod
-    async def _fetch_image_from_url(url: str) -> tuple[bytes, str]:
-        timeout = httpx.Timeout(ArticleService.HTTP_IMAGE_TIMEOUT_SECONDS)
-        try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                response = await client.get(url)
-        except httpx.HTTPError:
-            raise BadRequestException("image URL fetch failed")
-
-        if response.status_code >= 400:
-            raise BadRequestException("image URL is not accessible")
-
-        content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-        if not content_type.startswith("image/"):
-            raise BadRequestException("image URL must be an image")
-
-        image_bytes = response.content
-        if not image_bytes:
-            raise BadRequestException("image URL returned empty content")
-
-        return image_bytes, content_type
-
-    @staticmethod
-    async def _normalize_http_image_url_to_data_url(url: str, max_cover_bytes: int) -> str:
-        image_bytes, content_type = await ArticleService._fetch_image_from_url(url)
-        if len(image_bytes) > max_cover_bytes:
-            image_bytes, content_type = ArticleService._compress_image_bytes(image_bytes, max_cover_bytes)
-        return ArticleService._to_data_url(image_bytes, content_type)
+        return saved["url"]
 
     @staticmethod
     async def _normalize_content_images(content: Optional[str]) -> Optional[str]:
@@ -322,6 +310,8 @@ class ArticleService:
         markdown_link_matches = list(ArticleService._MARKDOWN_LINK_IMAGE_URL_RE.finditer(content))
         plain_line_matches = list(ArticleService._PLAIN_IMAGE_URL_LINE_RE.finditer(content))
         if not markdown_matches and not html_matches and not markdown_link_matches and not plain_line_matches:
+            if "data:image/" in content.lower():
+                raise BadRequestException("content contains legacy base64 images, please migrate first")
             return content
 
         image_urls: list[str] = []
@@ -338,7 +328,11 @@ class ArticleService:
         max_cover_bytes = await ArticleService._get_max_cover_image_bytes()
         normalized_urls: dict[str, str] = {}
         for url in unique_urls:
-            normalized_urls[url] = await ArticleService._normalize_http_image_url_to_data_url(url, max_cover_bytes)
+            normalized_urls[url] = await ArticleService._normalize_http_image_url_to_media_url(
+                url,
+                max_cover_bytes,
+                "articles/content",
+            )
 
         normalized_content = ArticleService._MARKDOWN_IMAGE_URL_RE.sub(
             lambda match: match.group(0).replace(match.group("url"), normalized_urls.get(match.group("url"), match.group("url"))),
@@ -356,6 +350,8 @@ class ArticleService:
             lambda match: f'{match.group("indent")}![image]({normalized_urls.get(match.group("url"), match.group("url"))})',
             normalized_content,
         )
+        if "data:image/" in normalized_content.lower():
+            raise BadRequestException("content contains legacy base64 images, please migrate first")
         return normalized_content
 
     @staticmethod
@@ -368,25 +364,20 @@ class ArticleService:
             return None
         max_cover_bytes = await ArticleService._get_max_cover_image_bytes()
 
+        existing_relative = MediaService.extract_relative_path_from_url(value)
+        if existing_relative:
+            return MediaService.to_public_url(existing_relative)
+
         if value.startswith("data:image/"):
-            if ";base64," not in value:
-                raise BadRequestException("cover_image base64 format is invalid")
-
-            base64_body = value.split(";base64,", 1)[1]
-            try:
-                decoded = base64.b64decode(base64_body, validate=True)
-            except (binascii.Error, ValueError):
-                raise BadRequestException("cover_image base64 content is invalid")
-
-            if len(decoded) > max_cover_bytes:
-                compressed_bytes, compressed_type = ArticleService._compress_image_bytes(decoded, max_cover_bytes)
-                return ArticleService._to_data_url(compressed_bytes, compressed_type)
-
-            return value
+            raise BadRequestException("cover_image data URL is deprecated, please upload via media API")
 
         if re.match(r"^https?://", value, flags=re.IGNORECASE):
             try:
-                return await ArticleService._normalize_http_image_url_to_data_url(value, max_cover_bytes)
+                return await ArticleService._normalize_http_image_url_to_media_url(
+                    value,
+                    max_cover_bytes,
+                    "articles/covers/original",
+                )
             except BadRequestException as exc:
                 detail = exc.message
                 if detail == "image URL fetch failed":
@@ -399,30 +390,15 @@ class ArticleService:
                     raise BadRequestException("cover_image URL returned empty content")
                 raise
 
-        raise BadRequestException("cover_image must be data:image base64 or http(s) URL")
-
-    @staticmethod
-    def _decode_data_url(data_url: str) -> bytes:
-        """Decode a `data:image/...;base64,...` URL into raw bytes."""
-        if ";base64," not in data_url:
-            raise BadRequestException("cover_image base64 format is invalid")
-        base64_body = data_url.split(";base64,", 1)[1]
-        try:
-            return base64.b64decode(base64_body, validate=True)
-        except (binascii.Error, ValueError):
-            raise BadRequestException("cover_image base64 content is invalid")
+        raise BadRequestException("cover_image must be media URL or http(s) URL")
 
     @staticmethod
     def _make_fixed_aspect_variant(
         image_bytes: bytes,
         size: tuple[int, int],
         quality: int,
-    ) -> str:
-        """生成固定 16:9 尺寸的居中裁剪缩略图，返回 data URL。
-
-        - 使用 ImageOps.fit 保证输出严格匹配 size，无变形（多余部分居中裁掉）。
-        - 输出 JPEG，前端 <img> 用 object-cover 填充固定容器，视觉永远一致。
-        """
+    ) -> bytes:
+        """生成固定 16:9 尺寸的居中裁剪缩略图，返回 JPEG bytes。"""
         try:
             with Image.open(io.BytesIO(image_bytes)) as im:
                 im = ImageOps.exif_transpose(im)
@@ -431,7 +407,7 @@ class ArticleService:
                 fitted = ImageOps.fit(rgb, size, method=resampling, centering=(0.5, 0.5))
                 buf = io.BytesIO()
                 fitted.save(buf, format="JPEG", optimize=True, quality=quality)
-                return ArticleService._to_data_url(buf.getvalue(), "image/jpeg")
+                return buf.getvalue()
         except UnidentifiedImageError:
             raise BadRequestException("cover_image is not a valid image")
         except OSError:
@@ -441,27 +417,34 @@ class ArticleService:
     async def _generate_cover_variants(
         normalized_cover: Optional[str],
     ) -> tuple[Optional[str], Optional[str]]:
-        """根据已归一化的封面 data URL 生成 (thumb, large) 两份 16:9 缩略图。
+        """根据已归一化封面 URL 生成 (thumb, large) 两份 16:9 缩略图 URL。
 
         若 normalized_cover 为空，返回 (None, None)。
         """
         if not normalized_cover:
             return None, None
-        if not normalized_cover.startswith("data:image/"):
-            return None, None
-
-        raw_bytes = ArticleService._decode_data_url(normalized_cover)
-        thumb = ArticleService._make_fixed_aspect_variant(
+        raw_bytes = MediaService.read_image_bytes(normalized_cover)
+        thumb_bytes = ArticleService._make_fixed_aspect_variant(
             raw_bytes,
             ArticleService.COVER_THUMB_SIZE,
             ArticleService.COVER_THUMB_QUALITY,
         )
-        large = ArticleService._make_fixed_aspect_variant(
+        large_bytes = ArticleService._make_fixed_aspect_variant(
             raw_bytes,
             ArticleService.COVER_LARGE_SIZE,
             ArticleService.COVER_LARGE_QUALITY,
         )
-        return thumb, large
+        thumb_saved = MediaService.save_image_bytes(
+            thumb_bytes,
+            folder="articles/covers/thumb",
+            max_edge=ArticleService.COVER_THUMB_SIZE[0],
+        )
+        large_saved = MediaService.save_image_bytes(
+            large_bytes,
+            folder="articles/covers/large",
+            max_edge=ArticleService.COVER_LARGE_SIZE[0],
+        )
+        return thumb_saved["url"], large_saved["url"]
 
     @staticmethod
     async def _build_cover_update_dict(cover_image_value: Optional[str]) -> dict:
@@ -903,12 +886,11 @@ class ArticleService:
         ordered_query = query.order_by("-published_at", "-created_at")
         offset = (page - 1) * page_size
 
-        total, total_views_result, items = await asyncio.gather(
+        total, items = await asyncio.gather(
             query.count(),
-            query.annotate(total_views=Sum("view_count")).values("total_views"),
             ordered_query.offset(offset).limit(page_size).prefetch_related("category", "article_tags__tag"),
         )
-        total_views = total_views_result[0]["total_views"] if total_views_result and total_views_result[0]["total_views"] else 0
+        total_views = 0
         if not is_admin and items:
             default_cover = await ArticleService._get_default_cover_dict()
             for item in items:

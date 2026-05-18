@@ -45,7 +45,7 @@ npm install
 npm run dev
 ```
 
-浏览器访问 http://localhost:5173，后端 API 文档 http://localhost:8000/docs。
+浏览器访问 http://localhost:5173，后端 API 文档 http://localhost:8000/api/docs。
 
 ### Docker
 

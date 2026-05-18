@@ -17,6 +17,17 @@ export interface AiWeatherData {
   updated_at: string
 }
 
+export interface WeatherCityLookupResult {
+  name: string
+  code: string
+}
+
 export const getWeather = (params: AiWeatherParams) => {
   return request.get<{ data: AiWeatherData }>('/ai/weather', { params })
+}
+
+export const lookupWeatherCityCode = (keyword: string) => {
+  return request.get<{ data: WeatherCityLookupResult }>('/ai/admin/weather/city-lookup', {
+    params: { keyword },
+  })
 }

@@ -12,7 +12,8 @@
             v-if="coverThumb"
             :src="coverThumb"
             :alt="article.title"
-            loading="lazy"
+            :loading="variant === 'featured' ? 'eager' : 'lazy'"
+            :fetchpriority="variant === 'featured' ? 'high' : undefined"
             decoding="async"
             class="absolute inset-0 size-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
           />

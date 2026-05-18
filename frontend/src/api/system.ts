@@ -15,6 +15,8 @@ export interface SiteConfig {
   comment_audit_enabled: boolean
   ai_enabled: boolean
   cover_image_max_size_mb?: number
+  weather_city_name?: string
+  weather_city_code?: string
 }
 
 export interface SystemConfigItem {

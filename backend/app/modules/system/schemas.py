@@ -109,3 +109,13 @@ class AdminNotificationOut(BaseModel):
 class AdminNotificationUnreadCount(BaseModel):
     count: int
 
+
+class PerfBeaconPayload(BaseModel):
+    path: str = Field(..., min_length=1, max_length=512)
+    navigation_type: Optional[str] = Field(default=None, max_length=64)
+    duration_ms: Optional[float] = None
+    dcl_ms: Optional[float] = None
+    load_ms: Optional[float] = None
+    fcp_ms: Optional[float] = None
+    lcp_ms: Optional[float] = None
+

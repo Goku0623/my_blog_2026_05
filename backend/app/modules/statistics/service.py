@@ -296,6 +296,17 @@ class StatisticsService:
 
     @staticmethod
     async def check_system_health() -> SystemHealthResponse:
+        cache_key = "statistics:system_health"
+        redis = None
+        try:
+            redis = await get_redis_client()
+            cached_data = await redis.get(cache_key)
+            if cached_data:
+                import json
+                return SystemHealthResponse(**json.loads(cached_data))
+        except Exception:
+            redis = None
+
         services = []
         
         async def check_postgres():
@@ -445,13 +456,20 @@ class StatisticsService:
         else:
             uptime = "-"
 
-        return SystemHealthResponse(
+        health = SystemHealthResponse(
             overall_status=overall_status,
             services=services,
             checked_at=datetime.now(timezone.utc),
             uptime=uptime,
             started_at=started_at,
         )
+        if redis:
+            try:
+                import json
+                await redis.setex(cache_key, 30, json.dumps(health.model_dump(mode="json")))
+            except Exception:
+                pass
+        return health
     
     @staticmethod
     async def record_daily_snapshot():
