@@ -35,34 +35,40 @@
             <UInput v-model="form.SITE_AUTHOR" />
           </Field>
           <Field label="默认文章封面图">
-            <UInput v-model="defaultCoverImageUrl" placeholder="图片 URL（可选，保存时自动转换）" />
+            <UInput v-model="form.DEFAULT_ARTICLE_COVER_IMAGE" placeholder="图片 URL（本地上传后自动填入）" />
             <div class="mt-2 flex flex-wrap gap-2">
               <input ref="defaultCoverInputRef" type="file" accept="image/*" class="hidden"
                 @change="handleDefaultCoverFileChange" />
-              <UButton variant="outline" @click="handleSelectDefaultCover">
+              <UButton variant="outline" :loading="defaultCoverUploading" @click="handleSelectDefaultCover">
                 <template #icon>
                   <ImagePlus class="size-4" />
                 </template>
                 选择图片
               </UButton>
-              <UButton variant="outline" :disabled="!defaultCoverImageUrl.trim()" @click="handleConvertDefaultCoverUrl">
-                从 URL 转换
+              <UButton variant="outline" :disabled="!defaultCoverFetchUrl.trim()" :loading="defaultCoverFetching" @click="handleFetchDefaultCoverUrl">
+                从 URL 上传
               </UButton>
-              <UButton v-if="defaultCoverPreview" variant="ghost" @click="clearDefaultCover">
+              <UButton v-if="form.DEFAULT_ARTICLE_COVER_IMAGE" variant="ghost" @click="clearDefaultCover">
                 <template #icon>
                   <Trash2 class="size-4" />
                 </template>
                 清除
               </UButton>
             </div>
+            <UInput v-model="defaultCoverFetchUrl" placeholder="输入图片 URL，再点「从 URL 上传」" class="mt-2" />
             <p class="mt-1 text-xs text-[var(--text-muted)]">
-              支持本地上传或 URL，保存后将自动生成 16:9 缩略图；最大约 {{ defaultCoverMaxSizeMb }}MB
+              上传后图片将自动保存到媒体库，并生成 16:9 缩略图；最大约 {{ defaultCoverMaxSizeMb }}MB
             </p>
-            <img v-if="defaultCoverPreview" :src="defaultCoverPreview"
+            <img v-if="form.DEFAULT_ARTICLE_COVER_IMAGE" :src="form.DEFAULT_ARTICLE_COVER_IMAGE"
               class="mt-2 w-full max-h-40 object-cover rounded-lg border border-[var(--border)]" />
           </Field>
           <Field label="ICP 备案号">
             <UInput v-model="form.ICP_NUMBER" placeholder="例如：京ICP备xxxxxx号" />
+          </Field>
+          <Field label="关于我·正文内容">
+            <UInput v-model="form.ABOUT_ME_CONTENT" type="textarea" :rows="5"
+              placeholder="在此输入「关于本站」的介绍文字，支持换行（Shift+Enter）" />
+            <p class="mt-1 text-xs text-[var(--text-muted)]">将显示在「关于我」页面的"关于本站"区块中</p>
           </Field>
         </div>
       </UCard>
@@ -243,6 +249,7 @@ import { reactive, onMounted, ref, computed, h } from 'vue'
 import { Save, Settings, ToggleRight, Cpu, Mail, ImagePlus, Trash2, Globe, Link } from 'lucide-vue-next'
 import { getAdminConfigs, bulkUpdateConfigs } from '@/api/system'
 import { lookupWeatherCityCode } from '@/api/ai'
+import { uploadMediaImage, fetchMediaImage } from '@/api/media'
 import { UCard, UInput, UButton, USwitch, toast } from '@/ui'
 
 const Field = (props: any, ctx: any) =>
@@ -297,6 +304,7 @@ interface ConfigForm {
   SITE_URL: string
   GITHUB_URL: string
   BILIBILI_URL: string
+  ABOUT_ME_CONTENT: string
 }
 
 const form = reactive<ConfigForm>({
@@ -331,6 +339,7 @@ const form = reactive<ConfigForm>({
   SITE_URL: '',
   GITHUB_URL: '',
   BILIBILI_URL: '',
+  ABOUT_ME_CONTENT: '',
 })
 
 const boolForm = reactive({
@@ -341,97 +350,14 @@ const boolForm = reactive({
 const saving = ref(false)
 const cityLookupLoading = ref(false)
 const defaultCoverInputRef = ref<HTMLInputElement | null>(null)
-const defaultCoverImageUrl = ref('')
+const defaultCoverUploading = ref(false)
+const defaultCoverFetching = ref(false)
+const defaultCoverFetchUrl = ref('')
 const defaultCoverMaxSizeMb = computed(() => {
   const parsed = Number(form.COVER_IMAGE_MAX_SIZE_MB)
   if (!Number.isFinite(parsed)) return 2
   return Math.min(20, Math.max(1, Math.floor(parsed)))
 })
-const maxDefaultCoverBytes = computed(() => defaultCoverMaxSizeMb.value * 1024 * 1024)
-const defaultCoverPreview = computed(() =>
-  form.DEFAULT_ARTICLE_COVER_IMAGE.trim() || defaultCoverImageUrl.value.trim(),
-)
-
-const blobToDataUrl = (blob: Blob): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
-    reader.onerror = () => reject(new Error('read blob failed'))
-    reader.readAsDataURL(blob)
-  })
-
-const loadImageElement = (blob: Blob): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(blob)
-    const img = new Image()
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl)
-      resolve(img)
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl)
-      reject(new Error('load image failed'))
-    }
-    img.src = objectUrl
-  })
-
-const compressImageBlob = async (blob: Blob, maxBytes: number): Promise<Blob> => {
-  const image = await loadImageElement(blob)
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')
-  if (!ctx) {
-    throw new Error('canvas unavailable')
-  }
-
-  const sourceLongEdge = Math.max(image.width, image.height)
-  const maxLongEdge = 2000
-  const baseScale = sourceLongEdge > maxLongEdge ? maxLongEdge / sourceLongEdge : 1
-  const baseWidth = Math.max(1, Math.floor(image.width * baseScale))
-  const baseHeight = Math.max(1, Math.floor(image.height * baseScale))
-  const resampleScales = [1, 0.9, 0.8, 0.7, 0.6, 0.5]
-  const qualities = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42]
-
-  for (const scale of resampleScales) {
-    const targetWidth = Math.max(1, Math.floor(baseWidth * scale))
-    const targetHeight = Math.max(1, Math.floor(baseHeight * scale))
-    canvas.width = targetWidth
-    canvas.height = targetHeight
-    ctx.clearRect(0, 0, targetWidth, targetHeight)
-    ctx.drawImage(image, 0, 0, targetWidth, targetHeight)
-
-    for (const quality of qualities) {
-      const compressedBlob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, 'image/jpeg', quality)
-      })
-      if (compressedBlob && compressedBlob.size <= maxBytes) {
-        return compressedBlob
-      }
-    }
-  }
-
-  throw new Error('compress failed')
-}
-
-const convertBlobToDefaultCoverBase64 = async (blob: Blob, sourceLabel: string) => {
-  if (!blob.type.startsWith('image/')) {
-    toast.warning('请选择图片文件')
-    return
-  }
-
-  let finalBlob = blob
-  if (blob.size > maxDefaultCoverBytes.value) {
-    finalBlob = await compressImageBlob(blob, maxDefaultCoverBytes.value)
-  }
-
-  const result = await blobToDataUrl(finalBlob)
-  if (!result.startsWith('data:image/')) {
-    throw new Error('invalid data url')
-  }
-  form.DEFAULT_ARTICLE_COVER_IMAGE = result
-  defaultCoverImageUrl.value = ''
-  const sizeKb = Math.round(finalBlob.size / 1024)
-  toast.success(`${sourceLabel}已转换为 base64（约 ${sizeKb}KB）`)
-}
 
 const handleSelectDefaultCover = () => {
   defaultCoverInputRef.value?.click()
@@ -439,7 +365,6 @@ const handleSelectDefaultCover = () => {
 
 const clearDefaultCover = () => {
   form.DEFAULT_ARTICLE_COVER_IMAGE = ''
-  defaultCoverImageUrl.value = ''
 }
 
 const handleDefaultCoverFileChange = async (event: Event) => {
@@ -447,16 +372,22 @@ const handleDefaultCoverFileChange = async (event: Event) => {
   const file = target.files?.[0]
   if (!file) return
   try {
-    await convertBlobToDefaultCoverBase64(file, '默认封面图')
+    defaultCoverUploading.value = true
+    const res = await uploadMediaImage(file, 'cover')
+    const url = res.data?.data?.url
+    if (!url) throw new Error('no url returned')
+    form.DEFAULT_ARTICLE_COVER_IMAGE = url
+    toast.success('封面图已上传到媒体库')
   } catch {
-    toast.error('默认封面图处理失败，请重试')
+    toast.error('封面图上传失败，请重试')
   } finally {
+    defaultCoverUploading.value = false
     target.value = ''
   }
 }
 
-const handleConvertDefaultCoverUrl = async () => {
-  const url = defaultCoverImageUrl.value.trim()
+const handleFetchDefaultCoverUrl = async () => {
+  const url = defaultCoverFetchUrl.value.trim()
   if (!url) {
     toast.warning('请输入图片 URL')
     return
@@ -465,17 +396,18 @@ const handleConvertDefaultCoverUrl = async () => {
     toast.warning('仅支持 http/https URL')
     return
   }
-
   try {
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error('fetch failed')
-    }
-    const blob = await response.blob()
-    await convertBlobToDefaultCoverBase64(blob, 'URL 图片')
+    defaultCoverFetching.value = true
+    const res = await fetchMediaImage(url, 'cover')
+    const resultUrl = res.data?.data?.url
+    if (!resultUrl) throw new Error('no url returned')
+    form.DEFAULT_ARTICLE_COVER_IMAGE = resultUrl
+    defaultCoverFetchUrl.value = ''
+    toast.success('图片已抓取并保存到媒体库')
   } catch {
-    form.DEFAULT_ARTICLE_COVER_IMAGE = ''
-    toast.info('前端转换失败，保存时将由后端尝试转换该 URL')
+    toast.error('URL 图片抓取失败，请检查链接是否可访问')
+  } finally {
+    defaultCoverFetching.value = false
   }
 }
 
@@ -491,9 +423,7 @@ const fetchConfigs = async () => {
         ; (boolForm as any)[item.key] = ['true', '1', 'on'].includes(String(item.value).toLowerCase())
       }
     })
-    defaultCoverImageUrl.value = /^https?:\/\//i.test(form.DEFAULT_ARTICLE_COVER_IMAGE.trim())
-      ? form.DEFAULT_ARTICLE_COVER_IMAGE.trim()
-      : ''
+    defaultCoverFetchUrl.value = ''
   } catch {
     toast.error('获取系统配置失败')
   }
@@ -502,16 +432,10 @@ const fetchConfigs = async () => {
 const handleSave = async () => {
   try {
     saving.value = true
-    const normalizedDefaultCoverData = form.DEFAULT_ARTICLE_COVER_IMAGE.trim()
-    const normalizedDefaultCoverUrl = defaultCoverImageUrl.value.trim()
-    const defaultCoverSubmitValue = normalizedDefaultCoverUrl || normalizedDefaultCoverData
-
     const updatePayload = [
       ...Object.keys(form).map((key) => ({
         key,
-        value: key === 'DEFAULT_ARTICLE_COVER_IMAGE'
-          ? defaultCoverSubmitValue
-          : String((form as any)[key] ?? ''),
+        value: String((form as any)[key] ?? ''),
       })),
       ...Object.keys(boolForm).map((key) => ({ key, value: (boolForm as any)[key] ? 'true' : 'false' })),
     ]

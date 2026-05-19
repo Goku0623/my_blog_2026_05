@@ -82,15 +82,20 @@
           <div class="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-8 shadow-[var(--shadow-sm)]">
             <h3 class="font-display text-lg font-semibold text-[var(--text)] mb-4">关于本站</h3>
             <div class="space-y-4 text-sm text-[var(--text-soft)] leading-relaxed">
-              <p>
-                这是一个基于 <span class="font-medium text-[var(--text)]">FastAPI</span> + <span class="font-medium text-[var(--text)]">Vue 3</span> 构建的现代化个人博客系统。
-              </p>
-              <p>
-                本站采用前后端分离架构，注重内容展示、性能优化与用户体验。设计风格偏向现代杂志风，支持亮色/暗色主题切换，文章支持 Markdown 渲染与代码高亮。
-              </p>
-              <p>
-                如果你对本站的技术实现感兴趣，欢迎通过上方链接与博主交流。
-              </p>
+              <template v-if="aboutMeParagraphs.length">
+                <p v-for="(para, idx) in aboutMeParagraphs" :key="idx">{{ para }}</p>
+              </template>
+              <template v-else>
+                <p>
+                  这是一个基于 <span class="font-medium text-[var(--text)]">FastAPI</span> + <span class="font-medium text-[var(--text)]">Vue 3</span> 构建的现代化个人博客系统。
+                </p>
+                <p>
+                  本站采用前后端分离架构，注重内容展示、性能优化与用户体验。设计风格偏向现代杂志风，支持亮色/暗色主题切换，文章支持 Markdown 渲染与代码高亮。
+                </p>
+                <p>
+                  如果你对本站的技术实现感兴趣，欢迎通过上方链接与博主交流。
+                </p>
+              </template>
             </div>
           </div>
         </div>
@@ -156,6 +161,12 @@ import SiteFooter from '../components/SiteFooter.vue'
 const siteStore = useSiteStore()
 
 const initialChar = computed(() => Array.from(siteStore.config.site_name || 'B')[0]?.toUpperCase() ?? 'B')
+
+const aboutMeParagraphs = computed(() => {
+  const content = (siteStore.config.about_me_content || '').trim()
+  if (!content) return []
+  return content.split('\n').filter((line) => line.trim() !== '')
+})
 
 const emailModalVisible = ref(false)
 const copied = ref(false)

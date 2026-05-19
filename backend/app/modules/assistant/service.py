@@ -12,7 +12,7 @@ from app.modules.comments.models import GuestIdentity
 from app.modules.assistant.schemas import AssistantChatRequest, AssistantChatResponse
 from app.modules.system.models import SiteConfig
 
-DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_TIMEOUT_SECONDS = 55.0
 DEFAULT_WEBHOOK_RESPONSE_PATHS = (
     ("data", "reply"),
     ("reply",),

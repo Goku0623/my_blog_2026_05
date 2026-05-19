@@ -55,6 +55,7 @@ async def assistant_chat(
             value=guest.guest_token,
             max_age=365 * 24 * 60 * 60,
             httponly=True,
-            samesite="lax",
+            samesite="none",
+            secure=True,
         )
     return success(result.model_dump())

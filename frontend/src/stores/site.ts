@@ -19,6 +19,7 @@ export const useSiteStore = defineStore('site', () => {
     cover_image_max_size_mb: 2,
     weather_city_name: '深圳市',
     weather_city_code: '440300',
+    about_me_content: '',
   })
 
   const loading = ref(false)

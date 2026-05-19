@@ -330,14 +330,23 @@ const getApiErrorMessage = (error: any, fallback: string) => {
 }
 
 const MAINTENANCE_MESSAGE = '功能维护中，择日再来吧'
+const TIMEOUT_MESSAGE = '机器人响应超时，请稍后再试'
 
 const shouldUseMaintenanceMessage = (error: any) => {
   const statusCode = Number(error?.response?.status || 0)
-  if ([500, 502, 503, 504].includes(statusCode)) {
+  if ([500, 503].includes(statusCode)) {
     return true
   }
   const backendMessage = String(error?.response?.data?.message || error?.response?.data?.detail || '')
   return backendMessage.includes('N8N_ASSISTANT_WEBHOOK_URL 未配置')
+}
+
+const shouldUseTimeoutMessage = (error: any) => {
+  const statusCode = Number(error?.response?.status || 0)
+  if ([502, 504].includes(statusCode)) return true
+  if (error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK') return true
+  const backendMessage = String(error?.response?.data?.message || error?.response?.data?.detail || '')
+  return backendMessage.includes('请求失败') || backendMessage.includes('timeout')
 }
 
 const closePanel = () => emit('close')
@@ -445,10 +454,22 @@ const sendMessage = async () => {
       toast.error(MAINTENANCE_MESSAGE)
       return
     }
+    if (shouldUseTimeoutMessage(error)) {
+      messages.value = messages.value.filter((item) => item.id !== userMessageId)
+      persistChatState()
+      await scrollToBottom()
+      toast.warning(TIMEOUT_MESSAGE)
+      return
+    }
     messages.value = messages.value.filter((item) => item.id !== userMessageId)
     persistChatState()
     await scrollToBottom()
-    const message = getApiErrorMessage(error, '助手暂时不可用，请稍后再试')
+    const statusCode = Number(error?.response?.status || 0)
+    const backendMsg = error?.response?.data?.message || error?.response?.data?.detail || ''
+    const networkCode = error?.code || ''
+    const debugHint = statusCode ? `[${statusCode}]` : networkCode ? `[${networkCode}]` : '[无响应]'
+    const message = getApiErrorMessage(error, `助手暂时不可用，请稍后再试 ${debugHint}`)
+    console.error('[AssistantChat] error', statusCode, networkCode, backendMsg, error)
     toast.error(message)
   } finally {
     loading.value = false
@@ -482,6 +503,9 @@ watch(
       syncRateLimitState()
       startCloseHintTimer()
       void scrollToBottom()
+      if (!guestStore.guestToken && !authStore.isAuthenticated) {
+        void guestStore.initGuest().catch(() => {})
+      }
       return
     }
     unlockBodyScroll()

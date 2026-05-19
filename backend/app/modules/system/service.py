@@ -56,6 +56,7 @@ class SiteConfigService:
         "SITE_URL": ("", "str", "站点完整 URL（例如 https://example.com）", False),
         "GITHUB_URL": ("", "str", "GitHub 主页地址", True),
         "BILIBILI_URL": ("", "str", "Bilibili 主页地址", True),
+        "ABOUT_ME_CONTENT": ("", "str", "关于我页面正文内容（支持换行，以\\n分隔）", True),
     }
 
     @staticmethod
@@ -324,6 +325,7 @@ class SiteConfigService:
             "github_url": _str("GITHUB_URL", ""),
             "bilibili_url": _str("BILIBILI_URL", ""),
             "site_started_at": _str("SITE_STARTED_AT", ""),
+            "about_me_content": _str("ABOUT_ME_CONTENT", ""),
         }
         if redis:
             try:

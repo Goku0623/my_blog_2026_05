@@ -17,6 +17,7 @@ export interface SiteConfig {
   cover_image_max_size_mb?: number
   weather_city_name?: string
   weather_city_code?: string
+  about_me_content?: string
 }
 
 export interface SystemConfigItem {
