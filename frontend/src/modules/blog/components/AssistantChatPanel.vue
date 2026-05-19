@@ -464,7 +464,6 @@ const sendMessage = async () => {
     messages.value = messages.value.filter((item) => item.id !== userMessageId)
     persistChatState()
     await scrollToBottom()
-    const statusCode = Number(error?.response?.status || 0)
     const backendMsg = error?.response?.data?.message || error?.response?.data?.detail || ''
     const networkCode = error?.code || ''
     const debugHint = statusCode ? `[${statusCode}]` : networkCode ? `[${networkCode}]` : '[无响应]'
