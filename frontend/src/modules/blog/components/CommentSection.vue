@@ -29,7 +29,7 @@
       </div>
 
       <div v-else class="flex gap-4 p-5 sm:p-6">
-        <UAvatar :name="currentDisplayName" :src="siteStore.config.admin_avatar || undefined" :size="40" />
+        <UAvatar :name="currentDisplayName" :src="currentAvatar" :size="40" />
 
         <div class="flex-1 min-w-0 space-y-3">
           <div class="flex items-center gap-2 text-sm">
@@ -177,8 +177,15 @@ let previewRenderTimer: number | null = null
 const renderedPreview = ref('')
 const currentDisplayName = computed(() => {
   const adminName = authStore.adminInfo?.username?.trim()
-  if (adminName) return adminName
+  if (authStore.isAuthenticated && adminName) return adminName
   return guestStore.guestName || '游客'
+})
+
+const currentAvatar = computed(() => {
+  if (authStore.isAuthenticated) {
+    return siteStore.config.admin_avatar || undefined
+  }
+  return undefined
 })
 
 const fetchComments = async (silent = false) => {

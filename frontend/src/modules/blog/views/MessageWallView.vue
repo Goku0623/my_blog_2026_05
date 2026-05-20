@@ -104,7 +104,7 @@
 
           <div v-else class="p-5 sm:p-7 space-y-4">
             <div class="flex items-center gap-3">
-              <UAvatar :name="guestDisplayName" :src="siteStore.config.admin_avatar || undefined" :size="40" />
+              <UAvatar :name="guestDisplayName" :src="currentAvatar" :size="40" />
               <div class="flex flex-wrap items-center gap-2 text-sm min-w-0">
                 <span class="font-medium text-[var(--text)]">{{ guestDisplayName }}</span>
                 <span class="text-xs text-[var(--text-muted)]">写下你想说的话…</span>
@@ -206,6 +206,13 @@ const guestDisplayName = computed(() => {
   const token = guestStore.guestToken || ''
   const short = token.replace(/-/g, '').toUpperCase().slice(0, 6)
   return guestStore.guestName || (short ? `游客${short}` : '游客')
+})
+
+const currentAvatar = computed(() => {
+  if (authStore.isAuthenticated) {
+    return siteStore.config.admin_avatar || undefined
+  }
+  return undefined
 })
 
 const renderPreview = () => {
